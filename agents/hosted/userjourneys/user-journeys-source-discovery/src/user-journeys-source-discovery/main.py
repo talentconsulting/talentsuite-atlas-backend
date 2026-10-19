@@ -38,8 +38,8 @@ async def handle_create(request: CreateResponse, context: ResponseContext, cance
         # Report failures rather than an empty graph, so a download error is never published as "no pages".
         logger.exception("User-journeys source discovery failed.")
         code = error.code if isinstance(error, ScanError) else "discovery_failed"
-        message = str(error) if isinstance(error, ScanError) else "User-journeys source discovery failed."
-        result = {"error": {"code": code, "message": message}}
+        detail = str(error) if isinstance(error, ScanError) else "User-journeys source discovery failed."
+        result = {"error": {"code": code, "message": detail}}
     yield text.emit_delta(json.dumps(result, separators=(",", ":")))
     yield text.emit_text_done()
     yield text.emit_done()
