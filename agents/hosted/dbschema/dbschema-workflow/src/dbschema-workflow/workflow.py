@@ -190,7 +190,49 @@ def merge_schemas(schemas: list[dict[str, Any]]) -> tuple[dict[str, Any], list[d
             if named_type["name"] not in type_names:
                 type_names.add(named_type["name"])
                 types.append(named_type)
+    tables = _merge_entity_tables(tables, warnings)
     return {"database": {"name": database_name, "engine": database_engine}, "tables": tables, "types": types}, warnings
+
+
+def _merge_entity_tables(tables: list[dict[str, Any]], warnings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Fold ORM entity classes into the SQL table they map to.
+
+    A repository with both a SQL database project and entity classes describes each table twice: once from the DDL
+    (with a schema such as dbo and SQL types) and once from the entity (no schema, C# types), usually in different
+    batches. When a name has exactly one table with a schema, entity copies without one are merged into it: the SQL
+    columns are kept, the PII flag is set if either copy has it, and relationships and indexes are combined.
+    """
+    by_name: dict[str, list[dict[str, Any]]] = {}
+    for table in tables:
+        by_name.setdefault(str(table["name"]).lower(), []).append(table)
+    folded: set[int] = set()
+    for group in by_name.values():
+        with_schema = [table for table in group if table.get("schema")]
+        entities = [table for table in group if not table.get("schema")]
+        if len(with_schema) != 1 or not entities:
+            continue   # nothing to fold, or ambiguous (several schemas)
+        target = with_schema[0]
+        for entity in entities:
+            target["hasPii"] = bool(target.get("hasPii") or entity.get("hasPii"))
+            target["entity"] = target.get("entity") or entity.get("entity")
+            if not target.get("columns"):
+                target["columns"] = entity.get("columns", [])
+            target.setdefault("relationships", [])
+            target.setdefault("indexes", [])
+            seen = {(str(r["targetTable"]).lower(), tuple(c.lower() for c in r["fromColumns"])) for r in target["relationships"]}
+            for relationship in entity.get("relationships", []):
+                key = (str(relationship["targetTable"]).lower(), tuple(c.lower() for c in relationship["fromColumns"]))
+                if key not in seen:
+                    seen.add(key)
+                    target["relationships"].append(relationship)
+            index_names = {str(index["name"]).lower() for index in target["indexes"]}
+            target["indexes"] += [index for index in entity.get("indexes", []) if str(index["name"]).lower() not in index_names]
+            folded.add(id(entity))
+            warnings.append({
+                "errorType": "MergedEntityTable",
+                "message": f"Merged entity {entity.get('entity') or entity['name']!r} into table {target['schema']}.{target['name']}.",
+            })
+    return [table for table in tables if id(table) not in folded]
 
 
 def _generate_batch(

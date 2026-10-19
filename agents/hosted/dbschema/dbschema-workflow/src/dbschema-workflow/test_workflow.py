@@ -370,5 +370,45 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual("DuplicateTable", warnings[0]["errorType"])
 
 
+def _full_table(name, schema=None, pii=False, entity=None, columns=("Id",), relationships=(), indexes=()):
+    return {"name": name, "schema": schema, "entity": entity, "hasPii": pii,
+            "columns": [{"name": c} for c in columns], "relationships": list(relationships), "indexes": list(indexes)}
+
+
+class MergeEntityTablesTests(unittest.TestCase):
+    def test_entity_copy_is_folded_into_the_sql_table(self):
+        sql = {"database": {"name": "app", "engine": "sqlserver"}, "types": [],
+               "tables": [_full_table("SharingEmail", "dbo", columns=("Id", "EmailAddress"), indexes=[{"name": "PK_SharingEmail"}])]}
+        orm = {"database": {"name": None, "engine": None}, "types": [],
+               "tables": [_full_table("SharingEmail", None, pii=True, entity="App.Domain.SharingEmail", columns=("Id", "Email", "Extra"),
+                                      relationships=[{"targetTable": "Sharing", "fromColumns": ["SharingId"]}],
+                                      indexes=[{"name": "pk_sharingemail"}, {"name": "IX_Sent"}])]}
+        merged, warnings = merge_schemas([sql, orm])
+        [table] = merged["tables"]
+        self.assertEqual(("dbo", "SharingEmail"), (table["schema"], table["name"]))
+        self.assertEqual(["Id", "EmailAddress"], [c["name"] for c in table["columns"]])     # SQL columns kept
+        self.assertTrue(table["hasPii"])
+        self.assertEqual("App.Domain.SharingEmail", table["entity"])
+        self.assertEqual([{"targetTable": "Sharing", "fromColumns": ["SharingId"]}], table["relationships"])
+        self.assertEqual(["PK_SharingEmail", "IX_Sent"], [i["name"] for i in table["indexes"]])
+        self.assertEqual("MergedEntityTable", warnings[-1]["errorType"])
+
+    def test_names_match_without_case_and_order_does_not_matter(self):
+        orm = {"database": {"name": None, "engine": None}, "types": [], "tables": [_full_table("user", None)]}
+        sql = {"database": {"name": "app", "engine": None}, "types": [], "tables": [_full_table("User", "dbo")]}
+        merged, _ = merge_schemas([orm, sql])
+        self.assertEqual([("dbo", "User")], [(t["schema"], t["name"]) for t in merged["tables"]])
+
+    def test_ambiguous_names_are_left_alone(self):
+        schema = {"database": {"name": "app", "engine": None}, "types": [],
+                  "tables": [_full_table("Audit", "dbo"), _full_table("Audit", "history"), _full_table("Audit", None)]}
+        merged, _ = merge_schemas([schema])
+        self.assertEqual(3, len(merged["tables"]))
+
+    def test_entity_only_tables_are_kept(self):
+        merged, _ = merge_schemas([{"database": {"name": "app", "engine": None}, "types": [], "tables": [_full_table("Orders", None)]}])
+        self.assertEqual(["Orders"], [t["name"] for t in merged["tables"]])
+
+
 if __name__ == "__main__":
     unittest.main()
