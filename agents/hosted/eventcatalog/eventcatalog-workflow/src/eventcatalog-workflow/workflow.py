@@ -232,11 +232,42 @@ def merge_catalogs(catalogs: list[dict[str, Any]]) -> tuple[dict[str, Any], list
                     if key not in handlers:
                         existing["handlers"].append(copy.deepcopy(handler))
                         handlers.add(key)
+                senders = existing.setdefault("senders", [])
+                for sender in message.get("senders", []):
+                    if not any((seen["name"], seen["sourceFile"]) == (sender["name"], sender["sourceFile"]) for seen in senders):
+                        senders.append(copy.deepcopy(sender))
                 existing["fields"].sort(key=lambda item: item["name"])
                 existing["handlers"].sort(key=lambda item: (item["name"], item["sourceFile"]))
+                senders.sort(key=lambda item: (item["sourceFile"], item["name"]))
+    _fold_sent_only_messages(result, warnings)
     for kind in ("commands", "events"):
         result[kind].sort(key=lambda item: ((item.get("namespace") or ""), item.get("name") or "", item.get("sourceFile") or ""))
     return result, warnings
+
+
+def _fold_sent_only_messages(catalog: dict[str, Any], warnings: list[dict[str, Any]]) -> None:
+    """Fold a message recorded only because it is sent into the declared message of the same name.
+
+    The generator guesses a sent type's namespace from the file's imports; when another batch declares the same
+    name under a different namespace (usually the repository's own), the declaration is right.
+    """
+    for kind in ("commands", "events"):
+        messages = catalog[kind]
+        sent_only = lambda m: not m.get("handlers") and not m.get("fields") and m.get("senders") and \
+            m.get("sourceFile") in {sender["sourceFile"] for sender in m["senders"]}
+        for message in [m for m in messages if sent_only(m)]:
+            declared = [m for m in messages if m is not message and m.get("name") == message.get("name") and not sent_only(m)]
+            if len(declared) != 1:
+                continue
+            target = declared[0]
+            senders = target.setdefault("senders", [])
+            for sender in message["senders"]:
+                if sender not in senders:
+                    senders.append(sender)
+            senders.sort(key=lambda item: (item["sourceFile"], item["name"]))
+            messages.remove(message)
+            warnings.append({"errorType": "FoldedSentMessage",
+                             "message": f"Recorded senders of {message['name']!r} on its declaration in {target.get('namespace')!r}."})
 
 
 def _generate_batch(

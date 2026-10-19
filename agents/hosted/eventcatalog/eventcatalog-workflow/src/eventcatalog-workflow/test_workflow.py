@@ -280,5 +280,33 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual("string", result["catalogs"][0]["catalog"]["commands"][0]["fields"][0]["type"])
 
 
+class SenderMergeTests(unittest.TestCase):
+    def test_senders_from_several_batches_are_combined(self):
+        from workflow import merge_catalogs
+        def catalog(sender_file):
+            return {"repository": "o/r", "ref": "main", "path": "src", "events": [], "commands": [
+                {"name": "SendEmailCommand", "namespace": "SFA.DAS.Notifications.Messages.Commands", "sourceFile": sender_file,
+                 "description": None, "fields": [], "handlers": [], "senders": [{"name": sender_file.split("/")[-1][:-3], "sourceFile": sender_file}]}]}
+        merged, _ = merge_catalogs([catalog("src/B.cs"), catalog("src/A.cs"), catalog("src/B.cs")])
+        [message] = merged["commands"]
+        self.assertEqual(["src/A.cs", "src/B.cs"], [s["sourceFile"] for s in message["senders"]])
+
+
+    def test_a_sent_only_entry_folds_into_the_declared_message_of_the_same_name(self):
+        from workflow import merge_catalogs
+        sent = {"repository": "o/r", "ref": "main", "path": "src", "events": [], "commands": [
+            {"name": "SendEmailToEmployerCommand", "namespace": "SFA.DAS.Notifications.Messages.Commands", "sourceFile": "src/H.cs",
+             "description": None, "fields": [], "handlers": [], "senders": [{"name": "H", "sourceFile": "src/H.cs"}]}]}
+        declared = {"repository": "o/r", "ref": "main", "path": "src", "events": [], "commands": [
+            {"name": "SendEmailToEmployerCommand", "namespace": "SFA.DAS.CommitmentsV2.Messages.Commands", "sourceFile": "src/Messages/C.cs",
+             "description": None, "fields": [{"name": "To", "type": "string", "required": True, "description": None}],
+             "handlers": [{"name": "SendEmailToEmployerCommandHandler", "sourceFile": "src/S.cs"}], "senders": []}]}
+        merged, warnings = merge_catalogs([sent, declared])
+        [message] = merged["commands"]
+        self.assertEqual("SFA.DAS.CommitmentsV2.Messages.Commands", message["namespace"])
+        self.assertEqual(["src/H.cs"], [s["sourceFile"] for s in message["senders"]])
+        self.assertEqual("FoldedSentMessage", warnings[-1]["errorType"])
+
+
 if __name__ == "__main__":
     unittest.main()

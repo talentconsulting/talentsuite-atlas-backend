@@ -35,6 +35,16 @@ MESSAGE_MARKER_RE = re.compile(
 )
 
 
+# A file that imports a ...Messages namespace and sends, publishes or routes a message: where a repository sends
+# messages (its own or another service's, e.g. SFA.DAS.Notifications.Messages.Commands.SendEmailCommand).
+MESSAGES_USING_RE = re.compile(r"^\s*using\s+[\w.]*\.Messages\b[\w.]*\s*;", re.MULTILINE)
+SENDS_RE = re.compile(r"RouteToEndpoint\s*\(\s*typeof\s*\(|\.(?:Send|SendLocal|Publish)\s*(?:<\s*\w+\s*>\s*)?\(")
+
+
+def _sends_messages(content: str) -> bool:
+    return bool(MESSAGES_USING_RE.search(content) and SENDS_RE.search(content))
+
+
 class ScanError(RuntimeError):
     pass
 
@@ -72,11 +82,14 @@ def _supported(path: str) -> bool:
 def _message_source(path: str, content: str) -> bool:
     stem = path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
     named_message = stem.endswith(("command", "event", "commandhandler", "eventhandler"))
-    return named_message or bool({part.lower() for part in path.split("/")[:-1]} & MESSAGE_PATH_PARTS) or bool(MESSAGE_MARKER_RE.search(content))
+    return (named_message or bool({part.lower() for part in path.split("/")[:-1]} & MESSAGE_PATH_PARTS)
+            or bool(MESSAGE_MARKER_RE.search(content)) or _sends_messages(content))
 
 
 def _priority(path: str, content: str) -> tuple[int, str]:
     lowered = path.lower()
+    if _sends_messages(content):   # ahead of everything, so the file limit never drops where messages are sent
+        return (-1, lowered)
     if re.search(r"(?:Command|Event)(?:Handler)?\.", path, re.IGNORECASE) or "/commands/" in f"/{lowered}" or "/events/" in f"/{lowered}":
         return (0, lowered)
     if re.search(r"\b(?:IRequest|INotification|ICommand|IEvent)(?:Handler)?\b", content, re.IGNORECASE):

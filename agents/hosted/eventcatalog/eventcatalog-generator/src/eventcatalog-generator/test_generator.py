@@ -17,7 +17,7 @@ CATALOG = {
             "sourceFile": "src/Application/Commands/CreateOrderCommand.cs",
             "description": None,
             "fields": [{"name": "orderId", "type": "Guid", "required": True, "description": None}],
-            "handlers": [{"name": "CreateOrderHandler", "sourceFile": "src/Application/Handlers/CreateOrderHandler.cs"}],
+            "handlers": [{"name": "CreateOrderHandler", "sourceFile": "src/Application/Handlers/CreateOrderHandler.cs"}], "senders": [],
         }
     ],
     "events": [],
@@ -78,6 +78,60 @@ class GeneratorTests(unittest.TestCase):
         catalog["commands"].append(second)
         result = validate_catalog(catalog)
         self.assertEqual(["ApproveOrderCommand", "CreateOrderCommand"], [item["name"] for item in result["commands"]])
+
+
+class SenderTests(unittest.TestCase):
+    SOURCES = {
+        "src/Commitments/Extensions/RoutingSettingsExtensions.cs": """using SFA.DAS.Notifications.Messages.Commands;
+using SFA.DAS.CommitmentsV2.Messages.Commands;
+static class Routing { static void Add(RoutingSettings routing) {
+    routing.RouteToEndpoint(typeof(SendEmailCommand), "SFA.DAS.Notifications.MessageHandlers");
+} }""",
+        "src/Commitments/Handlers/SendEmailToEmployerCommandHandler.cs": """using SFA.DAS.Notifications.Messages.Commands;
+using SFA.DAS.CommitmentsV2.Messages.Commands;
+class SendEmailToEmployerCommandHandler : IHandleMessages<SendEmailToEmployerCommand> {
+    async Task Handle(SendEmailToEmployerCommand message) {
+        var email = BuildEmail(message);
+        await _messageSession.Send(new SendEmailCommand(email.TemplateId, email.To, email.Tokens));
+        await _mediator.Send(new UpdateApprovalCommand(message.Id));
+    }
+}""",
+        "src/Commitments/Services/Approvals.cs": """using SFA.DAS.CommitmentsV2.Messages.Events;
+class Approvals { async Task Approve() {
+    ApprenticeshipApprovedEvent approved = new() { Id = 1 };
+    await _eventPublisher.Publish(approved);
+} }""",
+        "src/Commitments/Plain.cs": "class Plain { void A() { _session.Send(new SendEmailCommand()); } }",
+    }
+
+    def test_finds_routed_sent_and_published_messages_with_their_namespace(self):
+        from generator import sent_messages
+        found = sent_messages(self.SOURCES, "SkillsFundingAgency/das-commitments")
+        self.assertIn(("SendEmailCommand", "SFA.DAS.Notifications.Messages.Commands", "src/Commitments/Extensions/RoutingSettingsExtensions.cs"), found)
+        self.assertIn(("SendEmailCommand", "SFA.DAS.Notifications.Messages.Commands", "src/Commitments/Handlers/SendEmailToEmployerCommandHandler.cs"), found)
+        self.assertIn(("ApprenticeshipApprovedEvent", "SFA.DAS.CommitmentsV2.Messages.Events", "src/Commitments/Services/Approvals.cs"), found)
+        names = [name for name, _, _ in found]
+        self.assertNotIn("UpdateApprovalCommand", names)          # MediatR
+        self.assertNotIn("SendEmailToEmployerCommand", names)     # handled here, not sent
+        self.assertEqual(3, len(found))                           # Plain.cs imports no messages namespace
+
+    def test_adds_other_services_messages_with_senders_and_no_handlers(self):
+        from generator import add_senders
+        document = {"repository": "SkillsFundingAgency/das-commitments", "ref": "main", "path": "src", "commands": [], "events": []}
+        result = add_senders(document, self.SOURCES)
+        [email] = [m for m in result["commands"] if m["name"] == "SendEmailCommand"]
+        self.assertEqual("SFA.DAS.Notifications.Messages.Commands", email["namespace"])
+        self.assertEqual([], email["handlers"])
+        self.assertEqual(["RoutingSettingsExtensions", "SendEmailToEmployerCommandHandler"], [s["name"] for s in email["senders"]])
+
+    def test_senders_join_a_message_the_model_already_listed(self):
+        from generator import add_senders
+        document = {"repository": "SkillsFundingAgency/das-commitments", "ref": "main", "path": "src", "commands": [], "events": [
+            {"name": "ApprenticeshipApprovedEvent", "namespace": "SFA.DAS.CommitmentsV2.Messages.Events", "sourceFile": "src/Events/A.cs",
+             "description": None, "fields": [], "handlers": [], "senders": []}]}
+        result = add_senders(document, self.SOURCES)
+        self.assertEqual(1, len(result["events"]))
+        self.assertEqual(["src/Commitments/Services/Approvals.cs"], [s["sourceFile"] for s in result["events"][0]["senders"]])
 
 
 if __name__ == "__main__":

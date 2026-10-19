@@ -43,3 +43,15 @@ class ScanTests(unittest.TestCase):
             ["https://github.com/source/catalog/blob/main/src/Application/Commands/CreateOrderCommand.cs"],
             result["sourceFiles"],
         )
+
+
+class SendingFileTests(unittest.TestCase):
+    def test_files_that_send_messages_are_selected_first(self):
+        from scanner import _message_source, _priority
+        routing = "using SFA.DAS.Notifications.Messages.Commands;\nclass R { void A() { routing.RouteToEndpoint(typeof(SendEmailCommand), \"x\"); } }"
+        sender = "using SFA.DAS.Notifications.Messages.Commands;\nclass S { Task A() => _session.Send(new SendEmailCommand()); }"
+        mediatr_only = "using MediatR;\nclass M { Task A() => _mediator.Send(new GetThingQuery()); }"
+        self.assertTrue(_message_source("src/Extensions/RoutingSettingsExtensions.cs", routing))
+        self.assertEqual(-1, _priority("src/Extensions/RoutingSettingsExtensions.cs", routing)[0])
+        self.assertEqual(-1, _priority("src/Services/Sender.cs", sender)[0])
+        self.assertGreater(_priority("src/Services/Query.cs", mediatr_only)[0], -1)

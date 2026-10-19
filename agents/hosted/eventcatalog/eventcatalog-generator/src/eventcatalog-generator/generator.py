@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -40,12 +41,95 @@ or framework types as messages. Preserve source type names and source-relative p
 
 Return only one JSON object with exactly: repository, ref, path, commands, events. repository, ref,
 and path must match the supplied bundle. commands and events are arrays sorted by namespace then
-name. Every message has exactly: name, namespace, sourceFile, description, fields, handlers.
+name. Every message has exactly: name, namespace, sourceFile, description, fields, handlers, senders.
 namespace and description may be null. fields is an array of objects with exactly name, type,
 required, description; required is boolean or null, description may be null. handlers is an array
-of objects with exactly name and sourceFile. Use source-relative paths for every sourceFile. Use
-empty arrays when no fields or handlers are evidenced. Never invent descriptions.
+of objects with exactly name and sourceFile. senders is an array of objects with exactly name and
+sourceFile for each class that sends or publishes the message (for example through an NServiceBus
+IMessageSession.Send/Publish, or routes it with RouteToEndpoint). Include messages owned by other
+services that this code sends, such as SFA.DAS.Notifications.Messages.Commands.SendEmailCommand, with
+the namespace they are imported from, their senders, and empty fields and handlers unless evidenced.
+Use source-relative paths for every sourceFile. Use empty arrays when no fields, handlers or senders
+are evidenced. Never invent descriptions.
 """
+
+
+# Deterministic evidence of sending, from files that import a ...Messages namespace: messages routed with
+# RouteToEndpoint(typeof(X)), sent/published as Send<X>(...) or Send(new X(...)), or built as `X x = new(...)`
+# and then sent. MediatR (a receiver named *mediator*) is not messaging.
+MESSAGES_USING_RE = re.compile(r"^\s*using\s+([\w.]*\.Messages\b[\w.]*)\s*;", re.MULTILINE)
+ROUTED_RE = re.compile(r"RouteToEndpoint\s*\(\s*typeof\s*\(\s*(\w+)\s*\)")
+SENT_RE = re.compile(r"(\w+)\s*\.\s*(?:Send|SendLocal|Publish)\s*(?:<\s*(\w+)\s*>)?\s*\(\s*(?:new\s+(\w+)\b|(\w+)\b)?")
+DECLARED_RE = re.compile(r"\b(\w+(?:Command|Event))\s+(\w+)\s*=\s*new\b")
+HANDLED_RE = re.compile(r"IHandleMessages\s*<\s*(\w+)\s*>")
+
+
+def _tokens(value: str) -> set[str]:
+    return {token for token in re.findall(r"[a-z]+", re.sub(r"([a-z])([A-Z])", r"\1 \2", value).lower()) if token not in {"das", "sfa", "esfa", "v"}}
+
+
+def _own_namespace(namespace: str, repository: str) -> bool:
+    """SFA.DAS.CommitmentsV2.Messages.Commands belongs to das-commitments: its service segment shares the repo's words."""
+    segment = re.sub(r"^(?:E?SFA\.DAS\.)?", "", namespace).split(".Messages")[0]
+    return bool(_tokens(segment) & _tokens(repository))
+
+
+def sent_messages(sources: dict[str, str], repository: str = "") -> list[tuple[str, str | None, str]]:
+    """(message name, namespace or None, sourceFile) for every message the supplied code sends.
+
+    The namespace is where the supplied code declares the type, otherwise the imported ...Messages namespace of
+    the right kind (...Commands/...Events), preferring another service's over the repository's own: a type from a
+    package is usually another service's message. The workflow folds any mismatch into the declared message.
+    """
+    declared_in: dict[str, str] = {}
+    for text in sources.values():
+        namespace = re.search(r"\bnamespace\s+([\w.]+)", text)
+        for type_name in re.findall(r"\b(?:class|record)\s+(\w+(?:Command|Event))\b", text):
+            if namespace:
+                declared_in.setdefault(type_name, namespace.group(1))
+    found: list[tuple[str, str | None, str]] = []
+    for path, text in sources.items():
+        namespaces = MESSAGES_USING_RE.findall(text)
+        if not namespaces:
+            continue
+        handled = set(HANDLED_RE.findall(text))
+        declared = {variable: type_name for type_name, variable in DECLARED_RE.findall(text)}
+        names = set(ROUTED_RE.findall(text))
+        for receiver, generic, created, argument in SENT_RE.findall(text):
+            if "mediator" in receiver.lower():
+                continue
+            name = generic or created or declared.get(argument)
+            if name and name.endswith(("Command", "Event")):
+                names.add(name)
+        for name in sorted(names - handled):
+            namespace = declared_in.get(name)
+            if namespace is None:
+                suffix = "Events" if name.endswith("Event") else "Commands"
+                candidates = [n for n in namespaces if n.endswith(suffix)] or namespaces
+                foreign = [n for n in candidates if not _own_namespace(n, repository)]
+                namespace = (foreign or candidates)[0] if len(foreign or candidates) == 1 or foreign else None
+            found.append((name, namespace, path))
+    return found
+
+
+def add_senders(document: dict, sources: dict[str, str]) -> dict:
+    """Record each deterministically found send on its message, adding messages owned by other services."""
+    for name, namespace, path in sent_messages(sources, document.get("repository", "")):
+        kind = "events" if name.endswith("Event") else "commands"
+        sender = {"name": path.rsplit("/", 1)[-1].rsplit(".", 1)[0], "sourceFile": path}
+        matches = [m for m in document[kind] if m["name"] == name and (namespace is None or not m["namespace"] or m["namespace"] == namespace)]
+        if not matches:
+            matches = [{"name": name, "namespace": namespace, "sourceFile": path, "description": None,
+                        "fields": [], "handlers": [], "senders": []}]
+            document[kind].append(matches[0])
+        for message in matches:
+            if not any(existing["sourceFile"] == path for existing in message["senders"]):
+                message["senders"].append(sender)
+    for kind in ("commands", "events"):
+        for message in document[kind]:
+            message["senders"].sort(key=lambda item: (item["sourceFile"], item["name"]))
+        document[kind].sort(key=lambda item: ((item["namespace"] or ""), item["name"], item["sourceFile"]))
+    return document
 
 
 def parse_source_url(value: object) -> SourceLocation:
@@ -192,7 +276,9 @@ def validate_catalog(document: object, location: SourceLocation | None = None) -
             raise GenerationError("invalid_model_output", f"{kind} must be an array.")
         for index, message in enumerate(messages):
             label = f"{kind}[{index}]"
-            if not isinstance(message, dict) or set(message) != {"name", "namespace", "sourceFile", "description", "fields", "handlers"}:
+            if isinstance(message, dict) and "senders" not in message:
+                message["senders"] = []   # older prompts and partial answers: no senders evidenced
+            if not isinstance(message, dict) or set(message) != {"name", "namespace", "sourceFile", "description", "fields", "handlers", "senders"}:
                 raise GenerationError("invalid_model_output", f"{label} has an invalid shape.")
             if not isinstance(message["name"], str) or not message["name"]:
                 raise GenerationError("invalid_model_output", f"{label}.name must be non-empty.")
@@ -204,8 +290,12 @@ def validate_catalog(document: object, location: SourceLocation | None = None) -
             if identity in identities:
                 raise GenerationError("invalid_model_output", f"{label} duplicates a message.")
             identities.add(identity)
-            if not isinstance(message["fields"], list) or not isinstance(message["handlers"], list):
-                raise GenerationError("invalid_model_output", f"{label}.fields and handlers must be arrays.")
+            if not isinstance(message["fields"], list) or not isinstance(message["handlers"], list) or not isinstance(message["senders"], list):
+                raise GenerationError("invalid_model_output", f"{label}.fields, handlers and senders must be arrays.")
+            for number, sender in enumerate(message["senders"]):
+                if not isinstance(sender, dict) or set(sender) != {"name", "sourceFile"} or any(
+                        not isinstance(sender[field], str) or not sender[field] for field in ("name", "sourceFile")):
+                    raise GenerationError("invalid_model_output", f"{label}.senders[{number}] must have non-empty name and sourceFile.")
             field_names: set[str] = set()
             for number, field in enumerate(message["fields"]):
                 field_label = f"{label}.fields[{number}]"
@@ -241,4 +331,4 @@ def generate_from_text(
         document = json.loads(completion(source_prompt(location, sources)))
     except (json.JSONDecodeError, TypeError) as error:
         raise GenerationError("invalid_model_output", "Model output was not valid JSON.") from error
-    return validate_catalog(document, location)
+    return add_senders(validate_catalog(document, location), sources)
