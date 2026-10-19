@@ -203,6 +203,47 @@ class NavigationTests(unittest.TestCase):
         self.assertFalse(pages["/Index"]["requiresAuthentication"])
         self.assertTrue(pages["/Apprenticeships/Terms"]["requiresAuthentication"])
 
+    def test_route_constants_from_a_shared_project_literals_nameof_and_get_post_suffixes(self):
+        files = {
+            "src/Shared/Helpers/RouteConstants.cs": 'public static class RouteConstants { public const string Home = "Home"; public const string Results = "results-page"; }',
+            "src/Site.Web/Site.Web.csproj": "",
+            "src/Site.Web/Controllers/HomeController.cs": """public class HomeController : Controller
+{
+    [HttpGet("", Name = RouteConstants.Home)]
+    public IActionResult Index() { return View(); }
+
+    [HttpGet("results", Name = "results-page")]
+    public IActionResult Results() { if (x) return RedirectToRoute(RouteConstants.PageNotFound); return RedirectToRoute(nameof(RouteConstants.Home)); }
+}
+""",
+            "src/Site.Web/Controllers/FeedbackController.cs": """public class FeedbackController : Controller
+{
+    public const string QuestionGet = "question-get";
+    public const string QuestionPost = "question-post";
+    [HttpGet("q", Name = QuestionGet)]
+    public IActionResult Question() => View();
+    [HttpPost("q", Name = QuestionPost)]
+    public IActionResult Answer() { return RedirectToRoute(RouteConstants.Results); }
+}
+""",
+            "src/Site.Web/Views/Home/Index.cshtml": '<a asp-route="results-page">Results</a> <a asp-route="Home">Home</a>',
+            "src/Site.Web/Views/Feedback/Question.cshtml": "",
+        }
+        graph = extract(files, "src/Site.Web")
+        found = edges(graph)
+        self.assertEqual({"Home", "Results", "FeedbackController.Question"}, {p["id"] for p in graph["pages"]})
+        self.assertIn(("Home", "Results", "link"), found)                          # literal value of a constant
+        self.assertIn(("Results", "Home", "redirect"), found)                      # nameof(RouteConstants.Home)
+        self.assertIn(("FeedbackController.Question", "Results", "redirect"), found)
+        self.assertEqual([], graph["unresolved"])                                  # PageNotFound is ignored, not unresolved
+
+    def test_get_and_post_suffixes_with_separators_name_one_page(self):
+        from navigation import _Extractor
+        self.assertEqual("Landing", _Extractor.page_key("Landing_Get"))
+        self.assertEqual("QuestionOne", _Extractor.page_key("QuestionOne_Post"))
+        self.assertEqual("Landing_Get_New", _Extractor.page_key("Landing_Get_New"))
+        self.assertEqual("Share", _Extractor.page_key("ShareRoutePost"))
+
     def test_web_projects_need_pages_or_views(self):
         self.assertEqual([WEB], find_web_projects(list(FILES)))
 

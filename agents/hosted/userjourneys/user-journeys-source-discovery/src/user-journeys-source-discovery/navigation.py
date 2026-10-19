@@ -12,14 +12,18 @@ from collections import defaultdict
 from pathlib import PurePosixPath
 
 # Stubs, health checks and error pages exist for local development or plumbing, not user journeys.
-DEV_ONLY = re.compile(r"stub|ping|health|error", re.IGNORECASE)
+DEV_ONLY = re.compile(r"stub|ping|health|error|pagenotfound|problemwithservice", re.IGNORECASE)
 ROUTE_REF = r"((?:RouteNames\.)?[A-Z]\w*(?:\.\w+)*)"
+# A route reference in code: nameof(X.Y), a string literal, or a constant (RouteNames.X, RouteConstants.X, X).
+CODE_REF = r'(?:nameof\(([\w.]+)\)|"([^"]+)"|' + ROUTE_REF + r")"
+# Classes that hold route names: RouteNames, RouteConstants, AccountRoutes, ...
+ROUTE_CLASS = re.compile(r"^\w*Route(?:s|Names?|Constants?)$")
 METHOD_RE = re.compile(
     r"((?:\s*\[[^\]]*\]\s*)*)\s*public\s+(?:async\s+)?(?:Task<)?"
     r"(?:IActionResult|ActionResult|RedirectResult|ViewResult|RedirectToRouteResult)>?\s+(\w+)\s*\("
 )
 VIEW_LINK_RE = re.compile(
-    r'<(a|form|button)\b[^>]*?asp-route="@?' + ROUTE_REF + r'"'
+    r'<(a|form|button)\b[^>]*?asp-route="@?([\w.-]+)"'
     r"|Url\.RouteUrl\s*\(\s*" + ROUTE_REF
     + r'|<(a|form|button)\b[^>]*?asp-page="([^"]+)"'
     r'|<(a|form|button)\b[^>]*?asp-action="(\w+)"(?:[^>]*?asp-controller="(\w+)")?',
@@ -53,6 +57,9 @@ class _Extractor:
         self.files = {path: text for path, text in files.items()
                       if path.startswith(root) and not any("test" in part.lower() for part in path.split("/"))}
         self.cs = {p: t for p, t in self.files.items() if p.endswith(".cs")}
+        # Route-name classes are often in a shared project (e.g. *.Common), so they are read from the whole repository.
+        self.all_cs = {p: t for p, t in files.items()
+                       if p.endswith(".cs") and not any("test" in part.lower() for part in p.split("/"))}
         self.views = {p: t for p, t in self.files.items() if p.endswith(".cshtml")}
         self.route_values: dict[str, str] = {}
         self.pages: dict[str, dict] = {}
@@ -63,43 +70,59 @@ class _Extractor:
 
     # ---- route names ----
     def collect_route_names(self) -> None:
-        for path, text in self.cs.items():
-            if "class RouteNames" in text:
+        for path, text in self.all_cs.items():
+            if re.search(r"class\s+\w*Route(?:s|Names?|Constants?)\b", text):
                 stack: list[tuple[str, int]] = []
                 depth = 0
                 for line in text.splitlines():
                     m = re.search(r"\bclass\s+(\w+)", line)
                     if m:
                         stack.append((m.group(1), depth))
-                    c = re.search(r'const\s+string\s+(\w+)\s*=\s*(?:"([^"]*)"|nameof\((\w+)\))', line)
-                    if c and stack:
+                    for c in re.finditer(r'const\s+string\s+(\w+)\s*=\s*(?:"([^"]*)"|nameof\((\w+)\))', line):
+                        if not stack:
+                            break
                         names = [name for name, _ in stack]
-                        names = names[1:] if names[0] == "RouteNames" else names
+                        names = names[1:] if ROUTE_CLASS.match(names[0]) else names
                         key = ".".join([*names, c.group(1)])
                         self.route_values[key] = c.group(2) if c.group(2) is not None else c.group(3)
                     depth += line.count("{") - line.count("}")
                     while stack and depth <= stack[-1][1] and "}" in line:
                         stack.pop()
+            if path not in self.cs:
+                continue
             # Some apps keep route names as constants on each controller instead.
             cm = re.search(r"class\s+(\w+Controller)\b", text)
             if cm:
                 for name, value, nameof in re.findall(
-                        r'const\s+string\s+(\w*Route\w*)\s*=\s*(?:"([^"]+)"|nameof\((\w+)\))', text):
-                    self.route_values.setdefault(f"{cm.group(1)}.{name}", value or nameof)
+                        r'const\s+string\s+(\w+)\s*=\s*(?:"([^"]+)"|nameof\((\w+)\))', text):
+                    if not re.search(r"[/~]|\.cshtml$", value):   # view paths are not route names
+                        self.route_values.setdefault(f"{cm.group(1)}.{name}", value or nameof)
 
     def route_key(self, ref: str | None) -> str | None:
         if not ref:
             return None
-        ref = ref.removeprefix("RouteNames.")
+        head, _, rest = ref.partition(".")
+        if rest and ROUTE_CLASS.match(head):
+            ref = rest
         if ref in self.route_values:
             return ref
         matches = [key for key in self.route_values if key.endswith("." + ref)]
-        return matches[0] if len(matches) == 1 else None
+        if len(matches) == 1:
+            return matches[0]
+        # A string literal is the route name's value, e.g. asp-route="Home" for RouteConstants.Home = "Home".
+        by_value = [key for key, value in self.route_values.items() if value == ref]
+        return by_value[0] if len(by_value) == 1 else None
+
+    def name_key(self, nameof: str | None, literal: str | None, constant: str | None) -> str | None:
+        """The page key for a route name given as nameof(X), a "literal" or a constant (from a CODE_REF match)."""
+        if constant or nameof:
+            return self.page_key(self.route_key(constant or nameof))
+        return self.page_key(self.route_key(literal) or literal)   # an unknown literal is the route name itself
 
     @staticmethod
     def page_key(key: str | None) -> str | None:
-        # XRouteGet / XRoutePost name the same screen's GET and POST.
-        return re.sub(r"Route(Get|Post)$", "", key) if key else key
+        # XRouteGet / XRoutePost (or XGet, X_Post, ...) name the same screen's GET and POST.
+        return (re.sub(r"[_-]?(?:Route)?(?:Get|Post)$", "", key) or key) if key else key
 
     def target_key(self, ref: str) -> str:
         return self.page_key(self.route_key(ref)) or ref
@@ -130,14 +153,14 @@ class _Extractor:
             if controller.lower() in {"error", "ping", "health"} or DEV_ONLY.search(controller):
                 continue
             prefix = (re.search(r'\[Route\("([^"]*)"', class_attrs) or [None, ""])[1]
-            class_name = re.search(r"Name\s*=\s*" + ROUTE_REF, class_attrs)
-            class_name = self.route_key(class_name.group(1)) if class_name else None
+            class_name = re.search(r"Name\s*=\s*" + CODE_REF, class_attrs)
+            class_name = self.name_key(*class_name.groups()) if class_name else None
             class_auth = True if "[Authorize" in class_attrs else (False if "[AllowAnonymous" in class_attrs else None)
             consts = dict(re.findall(r'const\s+string\s+(\w+)\s*=\s*"([^"]+)"', text))
             for m in METHOD_RE.finditer(text, cm.end()):
                 attrs, action = m.group(1), m.group(2)
-                name = re.search(r"Name\s*=\s*" + ROUTE_REF, attrs)
-                name = self.route_key(name.group(1)) if name else None
+                name = re.search(r"Name\s*=\s*" + CODE_REF, attrs)
+                name = self.name_key(*name.groups()) if name else None
                 if name is None and class_name and not re.search(r'(?:Route|Http\w+)\("', attrs):
                     name = class_name   # the controller's route name applies to actions without their own template
                 page_id = self.page_key(name) or f"{controller}.{action}"
@@ -154,9 +177,11 @@ class _Extractor:
                 self.action_index[(controller, action)] = page_id
                 start, end = m.end(), _body_end(text, m.end())
                 body = text[start:end]
-                for e in re.finditer(r"RedirectToRoute\s*\(\s*" + ROUTE_REF + r"|Url\.RouteUrl\s*\(\s*" + ROUTE_REF, body):
-                    ref = e.group(1) or e.group(2)
-                    self.transition(page_id, self.target_key(ref), "redirect" if e.group(1) else "link", path, _line(text, start + e.start()))
+                for e in re.finditer(r"(RedirectToRoute|Url\.RouteUrl)\s*\(\s*" + CODE_REF, body):
+                    target = self.name_key(*e.groups()[1:4])
+                    if target:
+                        trigger = "redirect" if e.group(1) == "RedirectToRoute" else "link"
+                        self.transition(page_id, target, trigger, path, _line(text, start + e.start()))
                 for e in re.finditer(r"RedirectToRoute\s*\(([^;]*?\?[^;]*?:[^;]*?)\)\s*;", body):
                     for ref in re.findall(ROUTE_REF, e.group(1)):   # cond ? A : B
                         key = self.page_key(self.route_key(ref))
@@ -276,6 +301,8 @@ def extract(files: dict[str, str], web_root: str) -> dict:
     self_links = 0
     for t in x.raw:
         target = x.resolve(t["to"])
+        if target is None and isinstance(t["to"], str) and DEV_ONLY.search(t["to"]):
+            continue   # links to error/stub pages are not part of any journey
         if target is None:
             reference = t["to"] if isinstance(t["to"], str) else ".".join(str(part) for part in t["to"][1:] if part)
             unresolved.append({"from": t["from"], "reference": reference, "sourceFile": t["sourceFile"], "line": t["line"]})

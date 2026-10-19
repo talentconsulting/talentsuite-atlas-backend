@@ -27,7 +27,8 @@ jobs:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_MODEL_DEPLOYMENT_NAME || 'gpt-4o' }}
+      # gpt-4o drops most journeys for steps that are not real transitions; gpt-4.1 follows the graph far better.
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.USER_JOURNEYS_MODEL_DEPLOYMENT_NAME || 'gpt-4.1' }}
       AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'uksouth' }}
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'talent-day-rg' }}
       AZURE_AI_ACCOUNT_NAME: ${{ vars.AZURE_AI_ACCOUNT_NAME || 'talent-day-foundry' }}
