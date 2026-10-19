@@ -274,6 +274,14 @@ def validate_catalog(document: object, location: SourceLocation | None = None) -
         messages = document[kind]
         if not isinstance(messages, list):
             raise GenerationError("invalid_model_output", f"{kind} must be an array.")
+        # A message the model returned without a sourceFile takes its first sender's or handler's file; with
+        # neither there is no evidence for it, so it is dropped rather than failing the whole repository.
+        for message in messages:
+            if isinstance(message, dict) and not message.get("sourceFile"):
+                evidence = [item.get("sourceFile") for item in (message.get("senders") or []) + (message.get("handlers") or [])
+                            if isinstance(item, dict) and item.get("sourceFile")]
+                message["sourceFile"] = evidence[0] if evidence else None
+        messages[:] = [m for m in messages if not isinstance(m, dict) or m.get("sourceFile")]
         for index, message in enumerate(messages):
             label = f"{kind}[{index}]"
             if isinstance(message, dict) and "senders" not in message:

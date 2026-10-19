@@ -124,6 +124,15 @@ class Approvals { async Task Approve() {
         self.assertEqual([], email["handlers"])
         self.assertEqual(["RoutingSettingsExtensions", "SendEmailToEmployerCommandHandler"], [s["name"] for s in email["senders"]])
 
+    def test_a_message_without_a_source_file_takes_its_senders_or_is_dropped(self):
+        from generator import validate_catalog
+        message = lambda name, senders: {"name": name, "namespace": "N", "sourceFile": "", "description": None,
+                                         "fields": [], "handlers": [], "senders": senders}
+        document = {"repository": "o/r", "ref": "main", "path": "src", "events": [],
+                    "commands": [message("Sent", [{"name": "S", "sourceFile": "src/S.cs"}]), message("NoEvidence", [])]}
+        result = validate_catalog(document)
+        self.assertEqual([("Sent", "src/S.cs")], [(m["name"], m["sourceFile"]) for m in result["commands"]])
+
     def test_senders_join_a_message_the_model_already_listed(self):
         from generator import add_senders
         document = {"repository": "SkillsFundingAgency/das-commitments", "ref": "main", "path": "src", "commands": [], "events": [
