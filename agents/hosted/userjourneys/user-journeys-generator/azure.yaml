@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+requiredVersions:
+  extensions:
+    azure.ai.agents: '>=1.0.0-beta.4'
+
+name: user-journeys-generator
+
+services:
+  user-journeys-generator:
+    project: src/user-journeys-generator
+    host: azure.ai.agent
+    language: python
+    uses:
+      - ai-project
+    codeConfiguration:
+      dependencyResolution: remote_build
+      entryPoint: main.py
+      runtime: python_3_13
+    container:
+      resources:
+        cpu: "0.5"
+        memory: 1Gi
+    description: Describes pages and transitions of a deterministic navigation graph, and names its user journeys, validated against the graph.
+    environmentVariables:
+      - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+        value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+      - name: GITHUB_READ_TOKEN
+        value: ${{connections.github-source-read.credentials.github_token}}
+    kind: hosted
+    name: user-journeys-generator
+    displayName: User Journeys Generator
+    protocols:
+      - protocol: responses
+        version: 2.0.0
+
+  ai-project:
+    host: azure.ai.project
+    endpoint: ${AZURE_AI_PROJECT_ENDPOINT}
+
+infra:
+  provider: microsoft.foundry

@@ -1,0 +1,133 @@
+name: Deploy User Journeys Agent
+
+on:
+  workflow_call:
+    inputs:
+      project_dir:
+        required: true
+        type: string
+      service_name:
+        required: true
+        type: string
+      expected_marker:
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-and-test:
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      AZD_ENV_NAME: ci
+      AZURE_DEV_USER_AGENT: microsoft_foundry_skill
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_MODEL_DEPLOYMENT_NAME || 'gpt-4o' }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'uksouth' }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'talent-day-rg' }}
+      AZURE_AI_ACCOUNT_NAME: ${{ vars.AZURE_AI_ACCOUNT_NAME || 'talent-day-foundry' }}
+      AZURE_AI_PROJECT_NAME: ${{ vars.AZURE_AI_PROJECT_NAME || 'talent-day-proj-default' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        shell: bash
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AZURE_AI_PROJECT_ENDPOINT; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing dev environment secret $name."
+              exit 1
+            fi
+          done
+
+      - uses: Azure/setup-azd@v2
+
+      - name: Install Foundry extensions
+        working-directory: ${{ inputs.project_dir }}
+        run: |
+          azd extension install azure.ai.agents
+          azd extension install azure.ai.projects
+          azd extension install microsoft.foundry
+
+      - name: Sign in to azd with GitHub federated credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          azd auth login \
+            --client-id "$AZURE_CLIENT_ID" \
+            --federated-credential-provider "github" \
+            --tenant-id "$AZURE_TENANT_ID"
+
+      - name: Configure existing Foundry project
+        working-directory: ${{ inputs.project_dir }}
+        shell: bash
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          project_id="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.CognitiveServices/accounts/$AZURE_AI_ACCOUNT_NAME/projects/$AZURE_AI_PROJECT_NAME"
+          azd env select "$AZD_ENV_NAME" || azd env new "$AZD_ENV_NAME" --no-prompt
+          azd env set AZURE_SUBSCRIPTION_ID "$AZURE_SUBSCRIPTION_ID"
+          azd env set AZURE_TENANT_ID "$AZURE_TENANT_ID"
+          azd env set AZURE_LOCATION "$AZURE_LOCATION"
+          azd env set AZURE_RESOURCE_GROUP "$AZURE_RESOURCE_GROUP"
+          azd env set AZURE_AI_ACCOUNT_NAME "$AZURE_AI_ACCOUNT_NAME"
+          azd env set AZURE_AI_PROJECT_NAME "$AZURE_AI_PROJECT_NAME"
+          azd env set AZURE_AI_PROJECT_ID "$project_id"
+          azd env set AZURE_AI_PROJECT_ENDPOINT "$AZURE_AI_PROJECT_ENDPOINT"
+          azd env set FOUNDRY_PROJECT_ENDPOINT "$AZURE_AI_PROJECT_ENDPOINT"
+          azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "$AZURE_AI_MODEL_DEPLOYMENT_NAME"
+          azd env set USE_EXISTING_AI_PROJECT true
+          azd env set ENABLE_HOSTED_AGENTS true
+          azd env set ENABLE_CAPABILITY_HOST false
+          azd env set USER_JOURNEYS_DISCOVERY_AGENT_NAME user-journeys-source-discovery
+          azd env set USER_JOURNEYS_GENERATOR_AGENT_NAME user-journeys-generator
+          azd env set USER_JOURNEYS_PR_CREATOR_AGENT_NAME user-journeys-pr-creator
+          azd env set USER_JOURNEYS_WORKFLOW_AGENT_NAME user-journeys-workflow
+          azd env set USER_JOURNEYS_GENERATOR_CONCURRENCY 3
+          azd env set USER_JOURNEYS_MANIFEST_MAX_ENTRIES 100
+          azd env set USER_JOURNEYS_MANIFEST_MAX_CATALOGS 100
+          azd env set USER_JOURNEYS_MANIFEST_WORKFLOW_CONCURRENCY 4
+
+      - name: Run unit tests
+        working-directory: ${{ inputs.project_dir }}
+        run: python3 -m unittest discover -s "src/${{ inputs.service_name }}" -p 'test_*.py'
+
+      - name: Deploy agent
+        working-directory: ${{ inputs.project_dir }}
+        run: azd deploy "${{ inputs.service_name }}" --no-prompt
+
+      - name: Clear cached subscription ID before agent commands
+        working-directory: ${{ inputs.project_dir }}
+        shell: bash
+        # azd deploy needs AZURE_SUBSCRIPTION_ID, but leaving it set breaks azd ai agent
+        # show/invoke below: they resolve their token via `azd auth token`, whose tenant
+        # lookup for a discoverable subscription ID has no service-principal fast path
+        # and fails for this identity. `azd env set VAR ""` isn't enough -- azd loads
+        # every key in .env into its own process env at startup, so an empty value still
+        # counts as "found". Delete the key outright so the lookup skips cleanly and
+        # falls back to the tenant already established by azd auth login.
+        run: sed -i '/^AZURE_SUBSCRIPTION_ID=/d' ".azure/$AZD_ENV_NAME/.env"
+
+      - name: Verify deployed agent
+        working-directory: ${{ inputs.project_dir }}
+        run: azd ai agent show "${{ inputs.service_name }}" --output json --no-prompt
+
+      - name: Smoke test validation contract
+        working-directory: ${{ inputs.project_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          response_file="$RUNNER_TEMP/${{ inputs.service_name }}-response.txt"
+          azd ai agent invoke "${{ inputs.service_name }}" '{}' > "$response_file" 2>&1
+          cat "$response_file"
+          grep -q '${{ inputs.expected_marker }}' "$response_file"

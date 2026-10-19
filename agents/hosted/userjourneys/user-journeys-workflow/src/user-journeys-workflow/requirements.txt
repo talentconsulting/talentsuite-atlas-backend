@@ -1,0 +1,5 @@
+azure-ai-agentserver-responses==1.0.0b9
+azure-ai-projects>=2.0.0b2
+azure-identity>=1.25.1
+
+httpx==0.28.1

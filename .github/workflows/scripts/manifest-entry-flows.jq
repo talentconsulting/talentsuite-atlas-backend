@@ -5,6 +5,7 @@ def flowdefs: {
   "service-dependency": {"nodeKeys": ["service-dependencies"], "agent": "service-dependency-workflow", "project_dir": "agents/hosted/servicedependencies/service-dependency-workflow"},
   "c4": {"nodeKeys": ["c4"], "agent": "c4-workflow", "project_dir": "agents/hosted/c4/c4-workflow"},
   "local-dev-config": {"nodeKeys": ["local-dev-config"], "agent": "local-dev-config-workflow", "project_dir": "agents/hosted/localdevconfig/local-dev-config-workflow"},
+  "user-journeys": {"nodeKeys": ["user-journeys"], "agent": "user-journeys-workflow", "project_dir": "agents/hosted/userjourneys/user-journeys-workflow"},
   "repo-metadata": {"nodeKeys": ["repo-metadata"], "agent": "repo-metadata-workflow", "project_dir": "agents/hosted/repometadata/repo-metadata-workflow"}
 };
 

@@ -1,0 +1,13 @@
+name: Deploy User Journeys Workflow
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy-user-journeys-agent.reusable.yml
+    with:
+      project_dir: agents/hosted/userjourneys/user-journeys-workflow
+      service_name: user-journeys-workflow
+      expected_marker: invalid_source_url
+    secrets: inherit
