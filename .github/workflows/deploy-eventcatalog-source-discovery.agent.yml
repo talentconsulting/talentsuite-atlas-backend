@@ -27,6 +27,8 @@ jobs:
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'talent-day-rg' }}
       AZURE_AI_ACCOUNT_NAME: ${{ vars.AZURE_AI_ACCOUNT_NAME || 'talent-day-foundry' }}
       AZURE_AI_PROJECT_NAME: ${{ vars.AZURE_AI_PROJECT_NAME || 'talent-day-proj-default' }}
+      EVENTCATALOG_DISCOVERY_MAX_FILES: 500
+      EVENTCATALOG_DISCOVERY_MAX_BYTES: 10485760
 
     steps:
       - name: Checkout repository
@@ -89,6 +91,8 @@ jobs:
           azd env set USE_EXISTING_AI_PROJECT true
           azd env set ENABLE_HOSTED_AGENTS true
           azd env set ENABLE_CAPABILITY_HOST false
+          azd env set EVENTCATALOG_DISCOVERY_MAX_FILES "$EVENTCATALOG_DISCOVERY_MAX_FILES"
+          azd env set EVENTCATALOG_DISCOVERY_MAX_BYTES "$EVENTCATALOG_DISCOVERY_MAX_BYTES"
 
       - name: Run unit tests
         working-directory: ${{ env.AGENT_PROJECT_DIR }}

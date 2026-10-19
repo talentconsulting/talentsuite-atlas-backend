@@ -35,6 +35,8 @@ services:
         value: ${EVENTCATALOG_MANIFEST_MAX_CATALOGS}
       - name: EVENTCATALOG_MANIFEST_WORKFLOW_CONCURRENCY
         value: ${EVENTCATALOG_MANIFEST_WORKFLOW_CONCURRENCY}
+      - name: EVENTCATALOG_WORKFLOW_TIMEOUT_SECONDS
+        value: ${EVENTCATALOG_WORKFLOW_TIMEOUT_SECONDS}
       - name: GITHUB_READ_TOKEN
         value: ${{connections.openapi-pr-github.credentials.github_token}}
     kind: hosted

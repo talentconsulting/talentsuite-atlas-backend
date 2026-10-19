@@ -18,9 +18,10 @@ from dataclasses import dataclass
 GITHUB_TOKEN = os.getenv("GITHUB_READ_TOKEN")
 MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 250 * 1024 * 1024
-MAX_FILES = 100
+# Large repositories (e.g. das-commitments, ~460 message files) need more than the original 100 files.
+MAX_FILES = int(os.getenv("EVENTCATALOG_DISCOVERY_MAX_FILES", "500"))
 MAX_FILE_BYTES = 512 * 1024
-MAX_TOTAL_BYTES = 2 * 1024 * 1024
+MAX_TOTAL_BYTES = int(os.getenv("EVENTCATALOG_DISCOVERY_MAX_BYTES", str(10 * 1024 * 1024)))
 SUPPORTED_EXTENSIONS = {".cs", ".go", ".java", ".js", ".jsx", ".kt", ".php", ".prisma", ".py", ".rb", ".sql", ".ts", ".tsx", ".xml", ".yaml", ".yml"}
 IGNORED_PARTS = {".git", ".github", ".idea", ".vs", ".vscode", "adhocscripts", "bin", "build", "dist", "node_modules", "obj", "packages", "test", "tests", "unittests", "integrationtests", "acceptancetests", "testharness", "fakeservers"}
 IGNORED_SUFFIXES = (".tests", ".unittests", ".integrationtests", ".acceptancetests", ".testharness", ".fakeservers")

@@ -22,6 +22,7 @@ LEGACY_EVENTCATALOG_NODE = "event-catalog"
 # limit that a repeatedly-invoked orchestrator (checking commit hashes for every entry, every
 # run) can exhaust quickly. Reuses the same PAT the PR-creator agents already hold for writes.
 GITHUB_TOKEN = os.getenv("GITHUB_READ_TOKEN")
+WORKFLOW_TIMEOUT_SECONDS = int(os.getenv("EVENTCATALOG_WORKFLOW_TIMEOUT_SECONDS", "2400"))
 
 
 class ManifestError(ValueError):
@@ -283,7 +284,8 @@ def invoke_agent(
             response = client.responses.create(
                 model=model,
                 input=json.dumps(payload, separators=(",", ":")),
-                timeout=600,
+                # A large repository's workflow makes dozens of generator calls; allow it time to finish.
+                timeout=WORKFLOW_TIMEOUT_SECONDS,
             )
             return parse_json_value(response.output_text)
         except Exception as error:

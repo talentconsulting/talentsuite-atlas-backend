@@ -28,10 +28,10 @@ jobs:
       AZURE_AI_ACCOUNT_NAME: ${{ vars.AZURE_AI_ACCOUNT_NAME || 'talent-day-foundry' }}
       AZURE_AI_PROJECT_NAME: ${{ vars.AZURE_AI_PROJECT_NAME || 'talent-day-proj-default' }}
       EVENTCATALOG_DISCOVERY_AGENT_NAME: eventcatalog-source-discovery
-      EVENTCATALOG_DISCOVERY_MAX_FILES: 100
+      EVENTCATALOG_DISCOVERY_MAX_FILES: 500
       EVENTCATALOG_GENERATOR_AGENT_NAME: eventcatalog-generator
       EVENTCATALOG_GENERATOR_BATCH_SIZE: 10
-      EVENTCATALOG_GENERATOR_CONCURRENCY: 3
+      EVENTCATALOG_GENERATOR_CONCURRENCY: 6
       EVENTCATALOG_PR_CREATOR_AGENT_NAME: eventcatalog-pr-creator
     steps:
       - uses: actions/checkout@v4
