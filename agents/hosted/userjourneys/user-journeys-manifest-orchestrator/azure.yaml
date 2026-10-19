@@ -1,0 +1,48 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+requiredVersions:
+  extensions:
+    azure.ai.agents: '>=1.0.0-beta.4'
+
+name: user-journeys-manifest-orchestrator
+
+services:
+  user-journeys-manifest-orchestrator:
+    project: src/user-journeys-manifest-orchestrator
+    host: azure.ai.agent
+    language: python
+    uses: [ai-project]
+    codeConfiguration:
+      dependencyResolution: remote_build
+      entryPoint: main.py
+      runtime: python_3_13
+    container:
+      resources: { cpu: "0.5", memory: 1Gi }
+    description: Checks shared manifest user-journeys nodes for changed web repositories and creates one combined user-journeys and manifest update pull request.
+    environmentVariables:
+      - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+        value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+      - name: USER_JOURNEYS_WORKFLOW_AGENT_NAME
+        value: ${USER_JOURNEYS_WORKFLOW_AGENT_NAME}
+      - name: USER_JOURNEYS_PR_CREATOR_AGENT_NAME
+        value: ${USER_JOURNEYS_PR_CREATOR_AGENT_NAME}
+      - name: USER_JOURNEYS_MANIFEST_MAX_ENTRIES
+        value: ${USER_JOURNEYS_MANIFEST_MAX_ENTRIES}
+      - name: USER_JOURNEYS_MANIFEST_MAX_CATALOGS
+        value: ${USER_JOURNEYS_MANIFEST_MAX_CATALOGS}
+      - name: USER_JOURNEYS_MANIFEST_WORKFLOW_CONCURRENCY
+        value: ${USER_JOURNEYS_MANIFEST_WORKFLOW_CONCURRENCY}
+      - name: GITHUB_READ_TOKEN
+        value: ${{connections.openapi-pr-github.credentials.github_token}}
+    kind: hosted
+    name: user-journeys-manifest-orchestrator
+    displayName: User Journeys Manifest Orchestrator
+    protocols:
+      - protocol: responses
+        version: 2.0.0
+  ai-project:
+    host: azure.ai.project
+    endpoint: ${AZURE_AI_PROJECT_ENDPOINT}
+
+infra:
+  provider: microsoft.foundry

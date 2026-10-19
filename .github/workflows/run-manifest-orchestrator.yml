@@ -18,6 +18,7 @@ on:
           - service-dependency
           - c4
           - local-dev-config
+          - user-journeys
           - repo-metadata
           - system-summary
 
@@ -53,6 +54,7 @@ jobs:
             service-dependency) dir="servicedependencies/service-dependency-manifest-orchestrator"; agent="service-dependency-manifest-orchestrator" ;;
             c4) dir="c4/c4-manifest-orchestrator"; agent="c4-manifest-orchestrator" ;;
             local-dev-config) dir="localdevconfig/local-dev-config-manifest-orchestrator"; agent="local-dev-config-manifest-orchestrator" ;;
+            user-journeys) dir="userjourneys/user-journeys-manifest-orchestrator"; agent="user-journeys-manifest-orchestrator" ;;
             repo-metadata) dir="repometadata/repo-metadata-manifest-orchestrator"; agent="repo-metadata-manifest-orchestrator" ;;
             system-summary) dir="systemsummary/system-summary-manifest-orchestrator"; agent="system-summary-manifest-orchestrator" ;;
             *) echo "::error::Unknown flow '${{ inputs.flow }}'"; exit 1 ;;

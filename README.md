@@ -106,6 +106,9 @@ The dependency order is:
 - `repo-metadata-source-discovery` and `repo-metadata-pr-creator` are leaf agents; `repo-metadata-generator` is also a leaf agent but is fully deterministic (no model call).
 - `repo-metadata-workflow` depends on those three leaf agents.
 - `repo-metadata-manifest-orchestrator` depends on `repo-metadata-workflow` and `repo-metadata-pr-creator`.
+- `user-journeys-source-discovery`, `user-journeys-generator`, and `user-journeys-pr-creator` are leaf agents; discovery is fully deterministic (no model call).
+- `user-journeys-workflow` depends on those three leaf agents.
+- `user-journeys-manifest-orchestrator` depends on `user-journeys-workflow` and `user-journeys-pr-creator`.
 
 Previous workflows, scripts, prompt agents, and documentation are retained under [`backup/`](backup/).
 
@@ -175,6 +178,20 @@ The catalog's `dotnetSupport` field reports, for each distinct target framework 
 }
 ```
 
+## User journeys orchestration
+
+For web repositories only. [`user-journeys-source-discovery`](agents/hosted/userjourneys/user-journeys-source-discovery/README.md) builds each ASP.NET web project's navigation graph deterministically: pages (named routes and Razor Pages), the links, form posts and redirects between them with the file and line of each, whether sign-in is required, and entry points. [`user-journeys-generator`](agents/hosted/userjourneys/user-journeys-generator/README.md) uses the model only to describe that graph (a purpose per page, a condition per transition) and to name the user journeys through it; journeys whose steps are not transitions in the graph are rejected. [`user-journeys-workflow`](agents/hosted/userjourneys/user-journeys-workflow/README.md) writes `<repository>/user-journeys/user-journeys.json` and a Mermaid rendering, `user-journeys.md`, through [`user-journeys-pr-creator`](agents/hosted/userjourneys/user-journeys-pr-creator/README.md), while [`user-journeys-manifest-orchestrator`](agents/hosted/userjourneys/user-journeys-manifest-orchestrator/README.md) processes only `user-journeys` nodes and combines changed repositories with the manifest update in one PR.
+
+```json
+{
+  "github-repo": "https://github.com/owner/application-web",
+  "user-journeys": {
+    "path-to-scan": "tree/main/src",
+    "last-commit-hash-scanned": ""
+  }
+}
+```
+
 ## Run the complete workflow
 
 Invoke `openapi-spec-workflow` with:
@@ -200,7 +217,7 @@ Generated file paths are deterministic and flat. By default, `src/Api/BidsContro
 | --- | --- | --- |
 | `manifest_url` | Yes | Manifest blob URL, e.g. `https://github.com/talentconsulting/talentsuite-atlas/blob/main/manifest.json`. Its repository and branch become `targetRepository`/`targetBaseBranch`. |
 | `github_repo` | Yes | The exact `github-repo` value to match in the manifest, e.g. `https://github.com/owner/application`. |
-| `flows` | No | `all` (default) or a comma-separated subset of `openapi,dbschema,eventcatalog,service-dependency,c4,local-dev-config,repo-metadata`. Only flows actually present on the matched entry ever run. |
+| `flows` | No | `all` (default) or a comma-separated subset of `openapi,dbschema,eventcatalog,service-dependency,c4,local-dev-config,repo-metadata,user-journeys`. Only flows actually present on the matched entry ever run. |
 | `defer_publication` | No | When `true`, generates artefacts without opening pull requests. |
 
 A `prepare` job resolves the manifest entry into a matrix (via [`.github/workflows/scripts/manifest-entry-flows.jq`](.github/workflows/scripts/manifest-entry-flows.jq)) and fails fast with a clear error if the repository or none of the requested flow nodes are found. Each matched flow then runs as its own matrix job with `fail-fast: false`, so one flow failing does not stop the others; results are written to the job summary. This runs the direct per-repository workflow agents (not the manifest orchestrators), so it does not update `last-commit-hash-scanned` in the manifest,  it's for on-demand runs, not a replacement for the scheduled manifest orchestration.
@@ -355,6 +372,25 @@ cd ../repo-metadata-manifest-orchestrator
 azd deploy repo-metadata-manifest-orchestrator --no-prompt
 ```
 
+The user-journeys agents use the same dependency order:
+
+```bash
+cd agents/hosted/userjourneys/user-journeys-source-discovery
+azd deploy user-journeys-source-discovery --no-prompt
+
+cd ../user-journeys-generator
+azd deploy user-journeys-generator --no-prompt
+
+cd ../user-journeys-pr-creator
+azd deploy user-journeys-pr-creator --no-prompt
+
+cd ../user-journeys-workflow
+azd deploy user-journeys-workflow --no-prompt
+
+cd ../user-journeys-manifest-orchestrator
+azd deploy user-journeys-manifest-orchestrator --no-prompt
+```
+
 ## Test
 
 ```bash
@@ -392,4 +428,9 @@ python3 -m unittest discover -s agents/hosted/repometadata/repo-metadata-generat
 python3 -m unittest discover -s agents/hosted/repometadata/repo-metadata-pr-creator/src/repo-metadata-pr-creator -p 'test_*.py'
 python3 -m unittest discover -s agents/hosted/repometadata/repo-metadata-workflow/src/repo-metadata-workflow -p 'test_*.py'
 python3 -m unittest discover -s agents/hosted/repometadata/repo-metadata-manifest-orchestrator/src/repo-metadata-manifest-orchestrator -p 'test_*.py'
+python3 -m unittest discover -s agents/hosted/userjourneys/user-journeys-source-discovery/src/user-journeys-source-discovery -p 'test_*.py'
+python3 -m unittest discover -s agents/hosted/userjourneys/user-journeys-generator/src/user-journeys-generator -p 'test_*.py'
+python3 -m unittest discover -s agents/hosted/userjourneys/user-journeys-pr-creator/src/user-journeys-pr-creator -p 'test_*.py'
+python3 -m unittest discover -s agents/hosted/userjourneys/user-journeys-workflow/src/user-journeys-workflow -p 'test_*.py'
+python3 -m unittest discover -s agents/hosted/userjourneys/user-journeys-manifest-orchestrator/src/user-journeys-manifest-orchestrator -p 'test_*.py'
 ```

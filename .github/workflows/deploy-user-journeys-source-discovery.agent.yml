@@ -1,0 +1,13 @@
+name: Deploy User Journeys Source Discovery
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy-user-journeys-agent.reusable.yml
+    with:
+      project_dir: agents/hosted/userjourneys/user-journeys-source-discovery
+      service_name: user-journeys-source-discovery
+      expected_marker: invalid_input
+    secrets: inherit

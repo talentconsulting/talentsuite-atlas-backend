@@ -1,0 +1,13 @@
+name: Deploy User Journeys Manifest Orchestrator
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy-user-journeys-agent.reusable.yml
+    with:
+      project_dir: agents/hosted/userjourneys/user-journeys-manifest-orchestrator
+      service_name: user-journeys-manifest-orchestrator
+      expected_marker: invalid_input
+    secrets: inherit
