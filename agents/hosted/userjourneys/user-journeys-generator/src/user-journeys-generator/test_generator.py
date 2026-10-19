@@ -45,9 +45,18 @@ class DescribeTests(unittest.TestCase):
             "transitions": [{"from": "Vacancy", "to": "Apply", "trigger": "link", "condition": "when the vacancy is open"},
                             {"from": "Apply", "to": "Invented", "trigger": "link", "condition": "x"}],
         })
-        self.assertEqual([{"id": "Apply", "purpose": None}, {"id": "Vacancy", "purpose": "Shows a vacancy."}], result["pages"])
+        self.assertEqual([{"id": "Apply", "purpose": None, "fields": []}, {"id": "Vacancy", "purpose": "Shows a vacancy.", "fields": []}], result["pages"])
         self.assertEqual([{"from": "Vacancy", "to": "Apply", "trigger": "link", "condition": "when the vacancy is open"}],
                          result["transitions"])
+
+    def test_describes_validation_for_supplied_fields_only(self):
+        pages = [{"id": "Vacancy", "fields": [{"name": "Postcode", "control": "text"}]}, {"id": "Apply"}]
+        result = generate_from_text(describe_input(pages=pages), completion=lambda i, p: json.dumps({
+            "pages": [{"id": "Vacancy", "purpose": "x", "fields": [{"name": "Postcode", "validation": "required; valid UK postcode"},
+                                                                    {"name": "Invented", "validation": "x"}]}],
+            "transitions": []}), source_loader=loader)
+        self.assertEqual([{"name": "Postcode", "validation": "required; valid UK postcode"}], result["pages"][1]["fields"])
+        self.assertEqual([], result["pages"][0]["fields"])
 
     def test_unconditional_descriptions_become_null(self):
         result = self.run_model({"pages": [], "transitions": [

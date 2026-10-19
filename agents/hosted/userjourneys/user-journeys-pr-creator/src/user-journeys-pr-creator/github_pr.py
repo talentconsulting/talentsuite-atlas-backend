@@ -196,6 +196,19 @@ def render_markdown(catalog: dict[str, Any]) -> str:
         cells = [f"`{page['id']}`", ", ".join(f"`{r}`" for r in page.get("routes") or []) or "—", sign_in,
                  (page.get("purpose") or "—").replace("|", "\\|")]
         out.append("| " + " | ".join(cells) + " |")
+    pages_with_fields = [page for page in catalog["pages"] if page.get("fields")]
+    if pages_with_fields:
+        cell = lambda value: (value or "—").replace("|", "\\|")
+        out += ["", "## Form fields", "", "Field definitions only: no values a user enters are recorded.", ""]
+        for page in pages_with_fields:
+            out += [f"### `{page['id']}`", "", "| Field | Type | Label | Required | Rules | Options |", "| --- | --- | --- | --- | --- | --- |"]
+            for field in page["fields"]:
+                rules = "; ".join([*field.get("constraints", []), *([field["validation"]] if field.get("validation") else [])])
+                options = ", ".join(o.get("label") or o["value"] for o in field.get("options", []))
+                required = {True: "Yes", False: "No"}.get(field.get("required"), "—")
+                out.append("| " + " | ".join([f"`{field['name']}`", field.get("control", ""), cell(field.get("label")), required,
+                                              cell(rules), cell(options)]) + " |")
+            out.append("")
     return "\n".join(out) + "\n"
 
 

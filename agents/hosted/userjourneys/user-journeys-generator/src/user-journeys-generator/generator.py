@@ -51,9 +51,14 @@ You are given pages (named routes) and transitions between them that were extrac
 source files that define those pages. Do not add, remove or rename pages or transitions.
 
 Return one JSON object with exactly pages and transitions.
-- pages: one item per supplied page, each with exactly id and purpose. purpose is one plain-English sentence, from
-  the user's point of view, saying what the page is for (for example "Lets the apprentice confirm their training
+- pages: one item per supplied page, each with exactly id, purpose and fields. purpose is one plain-English sentence,
+  from the user's point of view, saying what the page is for (for example "Lets the apprentice confirm their training
   provider."). Use null only when the source gives no indication.
+  fields: one item per form field supplied for that page, each with exactly name and validation. validation is a
+  short plain-English summary of the rules the code enforces on that field (for example "required; at most 100
+  characters", "required when 'Other' is selected; must be a valid UK postcode"), from validator classes, attributes
+  or controller checks, or null when none are evident. State only rules you can see in the supplied code; never add
+  rules you would expect a field like this to have. Copy name exactly. Never describe values a user might enter.
 - transitions: one item per supplied transition, each with exactly from, to, trigger and condition, copying from, to
   and trigger exactly. condition is a short phrase saying when this transition happens, as the code shows it (for
   example "when the ULN does not match", "after saving the form", "if terms of use are not accepted"), or null when
@@ -150,7 +155,7 @@ def parse_input(user_input: str) -> dict:
         files = _id_list(payload["sourceFiles"], "sourceFiles")
         if not files or len(files) > MAX_SOURCE_FILES:
             raise GenerationError("invalid_input", f"sourceFiles must contain between 1 and {MAX_SOURCE_FILES} files.")
-        pages, transitions = _validate_graph_input(payload["pages"], payload["transitions"], {"routes", "kind", "sourceFile"})
+        pages, transitions = _validate_graph_input(payload["pages"], payload["transitions"], {"routes", "kind", "sourceFile", "fields"})
         return {"mode": "describe", "location": location, "paths": [_blob_path(f, location) for f in files],
                 "pages": pages, "transitions": transitions}
     if set(payload) != {"mode", "repository", "pages", "transitions"}:
@@ -225,10 +230,14 @@ def validate_description(document: dict, pages: list[dict], transitions: list[di
         raise GenerationError("invalid_model_output", "Model output requires exactly pages and transitions.")
     page_ids = {p["id"] for p in pages}
     keys = {(t["from"], t["to"], t["trigger"]) for t in transitions}
-    described_pages, described_transitions = {}, {}
+    supplied_fields = {p["id"]: {f.get("name") for f in p.get("fields") or [] if isinstance(f, dict)} for p in pages}
+    described_pages, described_transitions, described_fields = {}, {}, {}
     for item in document["pages"] if isinstance(document["pages"], list) else []:
         if isinstance(item, dict) and item.get("id") in page_ids:   # ignore anything not supplied
             described_pages[item["id"]] = _text(item.get("purpose"), f"pages[{item['id']}].purpose")
+            for field in item.get("fields") or [] if isinstance(item.get("fields"), list) else []:
+                if isinstance(field, dict) and field.get("name") in supplied_fields[item["id"]]:
+                    described_fields[(item["id"], field["name"])] = _text(field.get("validation"), "fields[].validation")
     for item in document["transitions"] if isinstance(document["transitions"], list) else []:
         if isinstance(item, dict):
             key = (item.get("from"), item.get("to"), item.get("trigger"))
@@ -237,7 +246,9 @@ def validate_description(document: dict, pages: list[dict], transitions: list[di
                 # Models sometimes describe an unconditional link instead of returning null.
                 described_transitions[key] = None if condition and condition.lower().strip(". ") in NOT_CONDITIONS else condition
     return {
-        "pages": [{"id": pid, "purpose": described_pages.get(pid)} for pid in sorted(page_ids)],
+        "pages": [{"id": pid, "purpose": described_pages.get(pid),
+                   "fields": [{"name": name, "validation": described_fields.get((pid, name))} for name in sorted(supplied_fields[pid]) if name]}
+                  for pid in sorted(page_ids)],
         "transitions": [{"from": f, "to": t, "trigger": g, "condition": described_transitions.get((f, t, g))}
                         for f, t, g in sorted(keys)],
     }

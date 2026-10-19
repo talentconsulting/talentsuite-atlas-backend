@@ -4,7 +4,7 @@ Uses the model to describe a navigation graph that `user-journeys-source-discove
 
 ## describe
 
-One batch of pages, their transitions and the GitHub blob URLs of the files that define them. Returns a one-sentence `purpose` per page and a `condition` per transition (or `null`).
+One batch of pages (with their form fields), their transitions and the GitHub blob URLs of the files that define them. Returns a one-sentence `purpose` per page, a `condition` per transition and a `validation` summary per field (or `null`), using only rules visible in the supplied code.
 
 ```json
 {"mode":"describe","sourceUrl":"https://github.com/owner/repository/tree/main/src",

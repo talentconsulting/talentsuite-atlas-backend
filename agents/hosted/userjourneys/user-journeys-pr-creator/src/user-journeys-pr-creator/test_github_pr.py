@@ -5,14 +5,17 @@ import unittest
 from github_pr import PublicationError, parse_request, publish, render_markdown, validate_request
 
 
-def page(page_id, auth=True, purpose=None):
+def page(page_id, auth=True, purpose=None, fields=()):
     return {"id": page_id, "kind": "mvc-action", "routes": [page_id.lower()], "methods": ["GET"], "sourceFile": "src/x.cs",
-            "line": 1, "requiresAuthentication": auth, "isEntryPoint": False, "purpose": purpose}
+            "line": 1, "requiresAuthentication": auth, "isEntryPoint": False, "purpose": purpose, "fields": list(fields)}
 
 
 CATALOG = {
     "repository": "source/app", "ref": "main", "path": "src", "webProjects": ["src/App.Web"],
-    "pages": [page("Vacancy", auth=False, purpose="Shows a vacancy."), page("Apply"), page("Jobs"), page("Skills"),
+    "pages": [page("Vacancy", auth=False, purpose="Shows a vacancy."), page("Apply"), page("Jobs", fields=[{"name": "HasJobs", "control": "radios", "label": "Do you have jobs?",
+                                       "options": [{"value": "true", "label": "Yes"}, {"value": "false", "label": "No"}],
+                                       "dataType": "bool?", "required": True, "constraints": ["max 5 entries"],
+                                       "validation": "select an option", "line": 4, "sourceFile": "src/v.cshtml"}]), page("Skills"),
               page("Preview", purpose="Check answers | submit")],
     "transitions": [
         {"from": "Vacancy", "to": "Apply", "trigger": "link", "condition": None, "evidence": ["src/x.cs:1"]},
@@ -118,6 +121,10 @@ class MarkdownTests(unittest.TestCase):
         self.assertIn('-->|"when every section is complete"|', self.markdown)
         self.assertIn("Apply 🔒", self.markdown)
         self.assertNotIn("Vacancy 🔒", self.markdown)                         # anonymous page
+
+    def test_form_fields_section(self):
+        self.assertIn("## Form fields", self.markdown)
+        self.assertIn("| `HasJobs` | radios | Do you have jobs? | Yes | max 5 entries; select an option | Yes, No |", self.markdown)
 
     def test_page_table_escapes_pipes(self):
         self.assertIn("Check answers \\| submit", self.markdown)

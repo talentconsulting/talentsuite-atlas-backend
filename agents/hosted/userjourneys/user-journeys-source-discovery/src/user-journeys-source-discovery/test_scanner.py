@@ -276,5 +276,97 @@ class ScanTests(unittest.TestCase):
         self.assertEqual("invalid_source_url", caught.exception.code)
 
 
+FORM_VIEW = """@model App.Web.Models.DetailsViewModel
+<form asp-route="@RouteNames.Apply" method="post">
+  <input type="hidden" asp-for="Id" />
+  <label class="govuk-label" asp-for="FirstName">First name</label>
+  <input class="govuk-input" asp-for="FirstName" />
+  <label class="govuk-label" for="Email">Email address</label>
+  <input class="govuk-input" asp-for="Email" type="email" id="Email" />
+  <fieldset class="govuk-fieldset">
+    <legend class="govuk-fieldset__legend">Do you have a <strong>disability</strong>?</legend>
+    <input class="govuk-radios__input" type="radio" asp-for="HasDisability" value="true" id="HasDisability-yes" />
+    <label class="govuk-label govuk-radios__label" for="HasDisability-yes">Yes</label>
+    <input class="govuk-radios__input" type="radio" asp-for="HasDisability" value="false" id="HasDisability-no" />
+    <label class="govuk-label govuk-radios__label" for="HasDisability-no">No</label>
+  </fieldset>
+  <select asp-for="Country"><option value="">Choose</option><option value="EN">England</option><option value="WA">Wales</option></select>
+  @Html.TextAreaFor(m => m.Notes)
+  <govuk-radios asp-for="Contact"><govuk-radios-fieldset><govuk-radios-fieldset-legend>How should we contact you?</govuk-radios-fieldset-legend>
+    <govuk-radios-item value="phone">Phone</govuk-radios-item><govuk-radios-item value="post">Post</govuk-radios-item></govuk-radios-fieldset></govuk-radios>
+  <button type="submit">Continue</button>
+</form>
+"""
+
+FORM_MODELS = """namespace App.Web.Models;
+public class BaseModel { [Required] public string Id { get; set; } }
+public class DetailsViewModel : BaseModel
+{
+    [Required]
+    [MaxLength(50)]
+    [Display(Name = "Given name")]
+    public string FirstName { get; set; }
+    [EmailAddress] public string Email { get; set; }
+    public bool? HasDisability { get; set; }
+    public string Country { get; set; }
+    public string Notes { get; set; }
+    public string Contact { get; set; }
+}
+public class DetailsValidator : AbstractValidator<DetailsViewModel> { }
+"""
+
+
+class FormFieldTests(unittest.TestCase):
+    def setUp(self):
+        from forms import ModelIndex, describe_fields, view_fields, view_model_type
+        models = ModelIndex({"src/App.Web/Models/Details.cs": FORM_MODELS})
+        self.models = models
+        self.fields = {f["name"]: f for f in describe_fields(view_fields(FORM_VIEW), models.properties(view_model_type(FORM_VIEW)))}
+
+    def test_finds_visible_fields_and_leaves_out_hidden_ones(self):
+        self.assertEqual(["FirstName", "Email", "HasDisability", "Country", "Notes", "Contact"], list(self.fields))
+
+    def test_controls_and_labels(self):
+        self.assertEqual(("text", "First name"), (self.fields["FirstName"]["control"], self.fields["FirstName"]["label"]))
+        self.assertEqual(("email", "Email address"), (self.fields["Email"]["control"], self.fields["Email"]["label"]))
+        self.assertEqual("Do you have a disability?", self.fields["HasDisability"]["label"])   # from the legend
+        self.assertEqual("textarea", self.fields["Notes"]["control"])
+        self.assertEqual(("radios", "How should we contact you?"), (self.fields["Contact"]["control"], self.fields["Contact"]["label"]))
+
+    def test_fixed_options_with_their_labels(self):
+        self.assertEqual([{"value": "true", "label": "Yes"}, {"value": "false", "label": "No"}], self.fields["HasDisability"]["options"])
+        self.assertEqual(["EN", "WA"], [o["value"] for o in self.fields["Country"]["options"]])
+        self.assertEqual([("phone", "Phone"), ("post", "Post")], [(o["value"], o["label"]) for o in self.fields["Contact"]["options"]])
+
+    def test_view_model_attributes(self):
+        first = self.fields["FirstName"]
+        self.assertTrue(first["required"])
+        self.assertEqual(["max 50 characters"], first["constraints"])
+        self.assertEqual("string", first["dataType"])
+        self.assertEqual(["email address"], self.fields["Email"]["constraints"])
+        self.assertIsNone(self.fields["Country"]["required"])
+        self.assertTrue(self.models.properties("DetailsViewModel")["Id"]["required"])   # inherited from the base class
+
+    def test_validators_are_found_by_model(self):
+        self.assertEqual("src/App.Web/Models/Details.cs", self.models.validators["DetailsViewModel"])
+
+    def test_pages_get_fields_and_their_validator_in_the_describe_batch(self):
+        files = {
+            "src/Site.Web/Site.Web.csproj": "",
+            "src/Site.Web/Models/Details.cs": FORM_MODELS,
+            "src/Site.Web/Controllers/DetailsController.cs": """public class DetailsController : Controller
+{
+    [HttpGet("details", Name = "details")]
+    public async Task<IActionResult> EditAsync() { return View(); }
+}""",
+            "src/Site.Web/Views/Details/Edit.cshtml": FORM_VIEW,   # found without the Async suffix
+        }
+        graph = extract(files, "src/Site.Web")
+        page = graph["pages"][0]
+        self.assertEqual(6, len(page["fields"]))
+        self.assertEqual("src/Site.Web/Views/Details/Edit.cshtml", page["fields"][0]["sourceFile"])
+        self.assertIn("src/Site.Web/Models/Details.cs", graph["pageFiles"]["details"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -148,36 +148,45 @@ def _describe(project, generator_name, model, source_url, graph, batches, concur
     pages = {p["id"]: p for p in graph["pages"]}
     payloads = [{
         "mode": "describe", "sourceUrl": source_url,
-        "pages": [{k: pages[pid][k] for k in ("id", "routes", "kind", "sourceFile")} for pid in batch["pageIds"]],
+        "pages": [{**{k: pages[pid][k] for k in ("id", "routes", "kind", "sourceFile")},
+                   "fields": [{k: f.get(k) for k in ("name", "control", "label", "required", "constraints")}
+                              for f in pages[pid].get("fields", [])]}
+                  for pid in batch["pageIds"]],
         "transitions": [t for pid in batch["pageIds"] for t in transitions_by_page.get(pid, [])],
         "sourceFiles": batch["files"],
     } for batch in batches]
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as executor:
         futures = [executor.submit(_call_generator, project, generator_name, model, payload, invoker,
                                    retry_delay_seconds=retry_delay_seconds) for payload in payloads]
-    purposes, conditions, errors = {}, {}, []
+    purposes, conditions, validations, errors = {}, {}, {}, []
     for batch, future in zip(batches, futures):   # batch order, so results are deterministic
         try:
             result = future.result()
             for page in result.get("pages", []):
                 if page.get("id") in pages:
                     purposes[page["id"]] = page.get("purpose")
+                    for field in page.get("fields") or []:
+                        validations[(page["id"], field.get("name"))] = field.get("validation")
             for t in result.get("transitions", []):
                 conditions[(t.get("from"), t.get("to"), t.get("trigger"))] = t.get("condition")
         except Exception as error:
             errors.append({"stage": "describe", "pageIds": batch["pageIds"][:20], "errorType": type(error).__name__,
                            "message": str(error)[:300]})
-    return purposes, conditions, errors
+    return purposes, conditions, validations, errors
 
 
-def build_catalog(discovery: dict, purposes: dict, conditions: dict, journeys: dict) -> dict[str, Any]:
+def build_catalog(discovery: dict, purposes: dict, conditions: dict, journeys: dict, validations: dict | None = None) -> dict[str, Any]:
+    validations = validations or {}
     graph = discovery["graph"]
     return {
         "repository": discovery["repository"],
         "ref": discovery["ref"],
         "path": discovery["path"],
         "webProjects": discovery["webProjects"],
-        "pages": [{**page, "purpose": purposes.get(page["id"], page.get("purpose"))} for page in graph["pages"]],
+        "pages": [{**page, "purpose": purposes.get(page["id"], page.get("purpose")),
+                   "fields": [{**field, "validation": validations.get((page["id"], field["name"]), field.get("validation"))}
+                              for field in page.get("fields", [])]}
+                  for page in graph["pages"]],
         "transitions": [{**t, "condition": conditions.get((t["from"], t["to"], t["trigger"]), t.get("condition"))}
                         for t in graph["transitions"]],
         "siteNavigation": graph["siteNavigation"],
@@ -234,9 +243,9 @@ def run_workflow(
     try:
         discovery = validate_discovery_output(invoker(project, discovery_name, model, {"sourceUrl": source_url}))
         graph = discovery["graph"]
-        purposes, conditions, journeys = {}, {}, {"journeys": [], "warnings": []}
+        purposes, conditions, validations, journeys = {}, {}, {}, {"journeys": [], "warnings": []}
         if graph["pages"]:
-            purposes, conditions, describe_errors = _describe(
+            purposes, conditions, validations, describe_errors = _describe(
                 project, generator_name, model, source_url, graph, discovery["batches"],
                 generator_concurrency, invoker, retry_delay_seconds)
             generation_errors += describe_errors
@@ -255,7 +264,7 @@ def run_workflow(
                                            invoker, retry_delay_seconds=retry_delay_seconds)
             except Exception as error:
                 generation_errors.append({"stage": "journeys", "errorType": type(error).__name__, "message": str(error)[:300]})
-        catalog = build_catalog(discovery, purposes, conditions, journeys)
+        catalog = build_catalog(discovery, purposes, conditions, journeys, validations)
     except Exception as error:
         code = error.code if isinstance(error, WorkflowError) else "generation_failed"
         message = str(error) if isinstance(error, WorkflowError) else "User-journeys generation failed."

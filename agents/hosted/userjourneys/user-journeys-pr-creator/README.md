@@ -3,7 +3,7 @@
 Publishes user-journey catalogs to the catalogue repository in one commit and one pull request. For each catalog it writes:
 
 - `<repo>/user-journeys/user-journeys.json`: the catalog as generated.
-- `<repo>/user-journeys/user-journeys.md`: each journey as a Mermaid flowchart (GitHub renders these), and a table of pages with route, sign-in and purpose.
+- `<repo>/user-journeys/user-journeys.md`: each journey as a Mermaid flowchart (GitHub renders these), a table of pages with route, sign-in and purpose, and each page's form fields (type, label, required, rules, options).
 
 ```json
 {

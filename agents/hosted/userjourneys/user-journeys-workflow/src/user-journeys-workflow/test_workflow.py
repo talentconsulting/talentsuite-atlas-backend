@@ -11,7 +11,10 @@ BLOB = "https://github.com/source/app/blob/main/src/App.Web/Controllers/{}.cs"
 def page(page_id):
     return {"id": page_id, "kind": "mvc-action", "routes": [page_id.lower()], "methods": ["GET"],
             "sourceFile": f"src/App.Web/Controllers/{page_id}.cs", "line": 1, "requiresAuthentication": True,
-            "isEntryPoint": page_id == "Home", "purpose": None}
+            "isEntryPoint": page_id == "Home", "purpose": None,
+            "fields": [{"name": "Email", "control": "email", "label": "Email", "options": [], "dataType": "string",
+                        "required": True, "constraints": [], "validation": None, "line": 3, "sourceFile": "src/v.cshtml"}]
+                      if page_id == "Apply" else []}
 
 
 def discovery(pages=("Home", "Apply", "Preview"), batches=None):
@@ -44,7 +47,9 @@ class FakeAgents:
         if payload["mode"] == "describe":
             if self.describe is not None:
                 return self.describe(payload)
-            return {"pages": [{"id": p["id"], "purpose": f"{p['id']} page"} for p in payload["pages"]],
+            return {"pages": [{"id": p["id"], "purpose": f"{p['id']} page",
+                               "fields": [{"name": f["name"], "validation": "required"} for f in p.get("fields", [])]}
+                              for p in payload["pages"]],
                     "transitions": [{**t, "condition": "always"} for t in payload["transitions"]]}
         if self.journeys is not None:
             return self.journeys(payload)
@@ -69,6 +74,15 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(["Apply"], [j["name"] for j in catalog["journeys"]])
         self.assertEqual((3, 1), (result["pageCount"], result["journeyCount"]))
         self.assertNotIn("pr", [name for name, _ in agents.calls])
+
+    def test_fields_go_to_describe_and_their_validation_comes_back(self):
+        agents = FakeAgents()
+        result = run(agents)
+        describe_payload = [p for name, p in agents.calls if name == "generator" and p["mode"] == "describe"][0]
+        self.assertEqual(["Email"], [f["name"] for page in describe_payload["pages"] for f in page["fields"]])
+        apply_page = [p for p in result["catalogs"][0]["catalog"]["pages"] if p["id"] == "Apply"][0]
+        self.assertEqual("required", apply_page["fields"][0]["validation"])
+        self.assertEqual("Email", apply_page["fields"][0]["label"])
 
     def test_journeys_request_carries_described_pages_and_conditions(self):
         agents = FakeAgents()

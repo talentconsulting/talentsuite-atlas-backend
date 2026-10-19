@@ -11,6 +11,8 @@ import re
 from collections import defaultdict
 from pathlib import PurePosixPath
 
+from forms import MAX_FIELDS_PER_PAGE, ModelIndex, describe_fields, view_fields, view_model_type
+
 # Stubs, health checks and error pages exist for local development or plumbing, not user journeys.
 DEV_ONLY = re.compile(r"stub|ping|health|error|pagenotfound|problemwithservice", re.IGNORECASE)
 ROUTE_REF = r"((?:RouteNames\.)?[A-Z]\w*(?:\.\w+)*)"
@@ -67,6 +69,14 @@ class _Extractor:
         self.view_owners: dict[str, set[str]] = defaultdict(set)
         self.action_index: dict[tuple[str, str], str] = {}
         self.page_files: dict[str, set[str]] = defaultdict(set)   # page id -> files that define its behaviour
+        self.page_fields: dict[str, dict[str, dict]] = defaultdict(dict)   # page id -> field name -> field
+        self._models: ModelIndex | None = None
+
+    @property
+    def models(self) -> ModelIndex:
+        if self._models is None:
+            self._models = ModelIndex(self.all_cs)
+        return self._models
 
     # ---- route names ----
     def collect_route_names(self) -> None:
@@ -197,7 +207,8 @@ class _Extractor:
                     elif arg in consts:
                         view = consts[arg]
                     else:
-                        view = f"~/Views/{controller}/{action}.cshtml"
+                        # ASP.NET picks the view by action name without an "Async" suffix.
+                        view = f"~/Views/{controller}/{action.removesuffix('Async')}.cshtml"
                     if not view.endswith(".cshtml"):
                         view = f"~/Views/{controller}/{view}.cshtml"
                     self.view_owners[(self.root + view.lstrip("~/")).lower()].add(page_id)
@@ -250,6 +261,25 @@ class _Extractor:
                 links += self.links_with_partials(partial, depth + 1, seen)
         return links
 
+    def fields_with_partials(self, path: str, depth: int = 0, seen: set | None = None) -> list[dict]:
+        """Form fields in a view and the partials it renders, each described from that file's own view model."""
+        seen = seen if seen is not None else set()
+        if path in seen or depth > 4:
+            return []
+        seen.add(path)
+        text = self.views[path]
+        model_type = view_model_type(text)
+        fields = [{**field, "sourceFile": path} for field in describe_fields(view_fields(text), self.models.properties(model_type))]
+        if model_type and model_type in self.models.validators:
+            fields = [{**field, "validator": self.models.validators[model_type]} for field in fields] or \
+                     [{"validatorOnly": self.models.validators[model_type]}]
+        partials = {PurePosixPath(p).stem.lower().lstrip("_"): p for p in self.views}
+        for a, b in PARTIAL_RE.findall(text):
+            partial = partials.get(PurePosixPath(a or b).stem.lower().lstrip("_"))
+            if partial:
+                fields += self.fields_with_partials(partial, depth + 1, seen)
+        return fields
+
     def collect_view_links(self) -> list[dict]:
         site_navigation = []
         for path in self.views:
@@ -261,7 +291,15 @@ class _Extractor:
             if not owners or PurePosixPath(path).name.lower() == "_layout.cshtml":
                 continue
             links = self.links_with_partials(path)
+            fields = self.fields_with_partials(path)
             for owner in owners:
+                for field in fields:
+                    validator = field.get("validator") or field.get("validatorOnly")
+                    if validator:   # the model summarises its rules, so it goes in the page's describe batch
+                        self.page_files[owner].add(validator)
+                    if "name" in field and len(self.page_fields[owner]) < MAX_FIELDS_PER_PAGE:
+                        clean = {k: v for k, v in field.items() if k not in {"validator", "validatorOnly"}}
+                        self.page_fields[owner].setdefault(field["name"], clean)
                 for target, trigger, src, line in links:
                     if isinstance(target, tuple) and target[0] == "action" and not target[1]:
                         target = ("action", self.pages[owner].get("controller"), target[2])   # same controller
@@ -323,7 +361,8 @@ def extract(files: dict[str, str], web_root: str) -> dict:
     pages = []
     for page in sorted(x.pages.values(), key=lambda p: p["id"]):
         pages.append({key: page[key] for key in ("id", "kind", "routes", "methods", "sourceFile", "line", "requiresAuthentication")}
-                     | {"isEntryPoint": page["id"] not in incoming, "purpose": None})
+                     | {"isEntryPoint": page["id"] not in incoming, "purpose": None,
+                        "fields": list(x.page_fields.get(page["id"], {}).values())})
     site_navigation = []
     for link in site:
         target = x.resolve(link["to"])
