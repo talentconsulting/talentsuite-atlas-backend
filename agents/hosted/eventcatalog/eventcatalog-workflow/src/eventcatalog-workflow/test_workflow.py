@@ -233,6 +233,31 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(1, len(result["generationErrors"]))
         self.assertEqual("ConflictingField", result["generationErrors"][0]["errorType"])
 
+    def test_batch_too_large_for_the_model_is_split_and_an_oversized_file_skipped(self):
+        overflow = RuntimeError("Error code: 400 - {'error': {'code': 'context_length_exceeded'}}")
+        calls = []
+
+        def invoke(project, name, model, payload, max_attempts=2):
+            if name == "discovery":
+                return {"sourceFiles": FILES, "excludedFiles": []}
+            calls.append(payload["sourceFiles"])
+            if len(payload["sourceFiles"]) > 1 or payload["sourceFiles"] == FILES[2:]:
+                raise overflow
+            return catalog(commands=[message(f"Command{FILES.index(payload['sourceFiles'][0])}")])
+
+        result = run_workflow(
+            object(), {"sourceUrl": SOURCE, "deferPublication": True},
+            "discovery", "generator", "publisher", "gpt-4o",
+            generator_batch_size=3, invoker=invoke, retry_delay_seconds=0,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(["Command0", "Command1"], [item["name"] for item in result["catalogs"][0]["catalog"]["commands"]])
+        self.assertEqual([{"files": FILES[2:], "errorType": "SourceFileTooLarge",
+                           "message": "Skipped: the file alone exceeds the model's context window."}], result["generationErrors"])
+        # Overflowing batches are split, not retried as they are.
+        self.assertEqual([FILES, FILES[:1], FILES[1:], FILES[1:2], FILES[2:]], calls)
+
     def test_batches_are_generated_concurrently(self):
         # Fails with BrokenBarrierError unless all three batches are in flight at once.
         barrier = threading.Barrier(3, timeout=5)
