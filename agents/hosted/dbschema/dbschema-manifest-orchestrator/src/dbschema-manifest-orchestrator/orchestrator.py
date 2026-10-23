@@ -21,10 +21,6 @@ MAX_MANIFEST_BYTES = 1024 * 1024
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 DBSCHEMA_NODE = "dbschema"
 LEGACY_DBSCHEMA_NODE = "db-schema"
-# Authenticated GitHub requests get a 5,000/hour rate limit instead of the 60/hour anonymous
-# limit that a repeatedly-invoked orchestrator (checking commit hashes for every entry, every
-# run) can exhaust quickly. Reuses the same PAT the PR-creator agents already hold for writes.
-
 
 class ManifestError(ValueError):
     """A stable manifest input, validation, or orchestration failure."""

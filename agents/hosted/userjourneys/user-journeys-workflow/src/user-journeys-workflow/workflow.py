@@ -69,8 +69,9 @@ def parse_workflow_request(input_text: str) -> dict[str, Any]:
         raise WorkflowError("invalid_input", "Input must be one JSON object.") from error
     if not isinstance(payload, dict):
         raise WorkflowError("invalid_input", "Input must be one JSON object.")
+    # tenant is the owner/repo data repository; discovery and the generator mint their GitHub read tokens for it.
     allowed = {"sourceUrl", "targetRepository", "targetDirectory", "targetBaseBranch", "branchName",
-               "pullRequestTitle", "pullRequestBody", "deferPublication"}
+               "pullRequestTitle", "pullRequestBody", "deferPublication", "tenant"}
     if not set(payload).issubset(allowed):
         raise WorkflowError("invalid_input", "Input contains unsupported properties.")
     parse_source_url(payload.get("sourceUrl"))
@@ -141,7 +142,7 @@ def _call_generator(project, generator_name, model, payload, invoker, max_attemp
     raise last_error
 
 
-def _describe(project, generator_name, model, source_url, graph, batches, concurrency, invoker, retry_delay_seconds):
+def _describe(project, generator_name, model, source_url, graph, batches, concurrency, invoker, retry_delay_seconds, tenant=None):
     transitions_by_page: dict[str, list[dict]] = {}
     for t in graph["transitions"]:
         transitions_by_page.setdefault(t["from"], []).append({"from": t["from"], "to": t["to"], "trigger": t["trigger"]})
@@ -154,6 +155,7 @@ def _describe(project, generator_name, model, source_url, graph, batches, concur
                   for pid in batch["pageIds"]],
         "transitions": [t for pid in batch["pageIds"] for t in transitions_by_page.get(pid, [])],
         "sourceFiles": batch["files"],
+        **({"tenant": tenant} if tenant else {}),
     } for batch in batches]
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as executor:
         futures = [executor.submit(_call_generator, project, generator_name, model, payload, invoker,
@@ -241,13 +243,15 @@ def run_workflow(
     source_url = request["sourceUrl"]
     generation_errors: list[dict[str, Any]] = []
     try:
-        discovery = validate_discovery_output(invoker(project, discovery_name, model, {"sourceUrl": source_url}))
+        tenant = request.get("tenant")
+        discovery_request = {"sourceUrl": source_url, **({"tenant": tenant} if tenant else {})}
+        discovery = validate_discovery_output(invoker(project, discovery_name, model, discovery_request))
         graph = discovery["graph"]
         purposes, conditions, validations, journeys = {}, {}, {}, {"journeys": [], "warnings": []}
         if graph["pages"]:
             purposes, conditions, validations, describe_errors = _describe(
                 project, generator_name, model, source_url, graph, discovery["batches"],
-                generator_concurrency, invoker, retry_delay_seconds)
+                generator_concurrency, invoker, retry_delay_seconds, tenant)
             generation_errors += describe_errors
             if describe_errors and len(describe_errors) == len(discovery["batches"]):
                 # Every model call failed (an outage, say): fail so the commit is not recorded and the next run retries.

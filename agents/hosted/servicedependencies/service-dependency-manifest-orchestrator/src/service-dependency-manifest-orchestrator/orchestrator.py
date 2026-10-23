@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import concurrent.futures
 import copy
+import functools
 import json
-import os
 import re
 import urllib.error
 import urllib.parse
@@ -13,15 +13,12 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable
 
+import github_app
+
 
 MAX_MANIFEST_BYTES = 1024 * 1024
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 MANIFEST_NODE = "service-dependencies"
-# Authenticated GitHub requests get a 5,000/hour rate limit instead of the 60/hour anonymous
-# limit that a repeatedly-invoked orchestrator (checking commit hashes for every entry, every
-# run) can exhaust quickly. Reuses the same PAT the PR-creator agents already hold for writes.
-GITHUB_TOKEN = os.getenv("GITHUB_READ_TOKEN")
-
 
 class ManifestError(ValueError):
     def __init__(self, code: str, message: str):
@@ -36,6 +33,11 @@ class GitHubBlob:
     ref: str
     path: str
     url: str
+
+    @property
+    def tenant(self) -> str:
+        """The data repository holding the manifest identifies the tenant."""
+        return f"{self.owner}/{self.repository}"
 
 
 @dataclass(frozen=True)
@@ -94,10 +96,12 @@ def parse_blob_url(value: str) -> GitHubBlob:
     return GitHubBlob(owner, repository.removesuffix(".git"), ref, path, value)
 
 
-def _read_url(url: str) -> bytes:
+def _read_url(url: str, token: str | None = None, accept: str | None = None) -> bytes:
     headers = {"User-Agent": "service-dependency-manifest-orchestrator"}
-    if GITHUB_TOKEN:
-        headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if accept:
+        headers["Accept"] = accept
     request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
@@ -122,13 +126,16 @@ def _read_url(url: str) -> bytes:
 
 
 def download_manifest(blob: GitHubBlob) -> object:
-    raw_url = (
-        f"https://raw.githubusercontent.com/{urllib.parse.quote(blob.owner, safe='')}/"
-        f"{urllib.parse.quote(blob.repository, safe='')}/{urllib.parse.quote(blob.ref, safe='')}/"
-        f"{urllib.parse.quote(blob.path, safe='/')}"
-    )
+    owner, repository = urllib.parse.quote(blob.owner, safe=""), urllib.parse.quote(blob.repository, safe="")
+    token = github_app.read_token(blob.tenant)
+    if token:
+        # The contents API accepts App installation tokens; raw.githubusercontent.com is for anonymous reads.
+        url = f"https://api.github.com/repos/{owner}/{repository}/contents/{urllib.parse.quote(blob.path, safe='/')}?ref={urllib.parse.quote(blob.ref, safe='')}"
+        body = _read_url(url, token, accept="application/vnd.github.raw")
+    else:
+        body = _read_url(f"https://raw.githubusercontent.com/{owner}/{repository}/{urllib.parse.quote(blob.ref, safe='')}/{urllib.parse.quote(blob.path, safe='/')}")
     try:
-        return json.loads(_read_url(raw_url).decode("utf-8"))
+        return json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ManifestError("invalid_manifest", "The manifest must contain UTF-8 JSON.") from error
 
@@ -199,20 +206,21 @@ def validate_manifest(value: object, max_entries: int) -> tuple[list[ManifestEnt
     return entries, skipped_repositories
 
 
-def _default_branch(entry: ManifestEntry) -> str:
+def _default_branch(entry: ManifestEntry, token: str | None = None) -> str:
     endpoint = (
         f"https://api.github.com/repos/{urllib.parse.quote(entry.owner, safe='')}/"
         f"{urllib.parse.quote(entry.repository, safe='')}"
     )
-    response = json.loads(_read_url(endpoint).decode("utf-8"))
+    response = json.loads(_read_url(endpoint, token).decode("utf-8"))
     branch = response.get("default_branch") if isinstance(response, dict) else None
     if not isinstance(branch, str) or not branch:
         raise ManifestError("github_api_error", f"GitHub did not report a default branch for {entry.repository_name}.")
     return branch
 
 
-def latest_commit(entry: ManifestEntry) -> str:
-    default_branch = _default_branch(entry)
+def latest_commit(entry: ManifestEntry, tenant: str | None = None) -> str:
+    token = github_app.read_token(tenant)
+    default_branch = _default_branch(entry, token)
     if entry.ref != default_branch:
         raise ManifestError(
             "invalid_manifest",
@@ -223,7 +231,7 @@ def latest_commit(entry: ManifestEntry) -> str:
         f"https://api.github.com/repos/{urllib.parse.quote(entry.owner, safe='')}/"
         f"{urllib.parse.quote(entry.repository, safe='')}/commits/{urllib.parse.quote(entry.ref, safe='')}"
     )
-    response = json.loads(_read_url(endpoint).decode("utf-8"))
+    response = json.loads(_read_url(endpoint, token).decode("utf-8"))
     sha = response.get("sha") if isinstance(response, dict) else None
     if not isinstance(sha, str) or not COMMIT_PATTERN.fullmatch(sha):
         raise ManifestError("github_api_error", f"GitHub returned an invalid commit for {entry.repository_name}.")
@@ -306,10 +314,12 @@ def run_manifest(
     max_catalogs: int = 100,
     max_concurrency: int = 6,
     manifest_loader: Callable[[GitHubBlob], object] = download_manifest,
-    commit_resolver: Callable[[ManifestEntry], str] = latest_commit,
+    commit_resolver: Callable[[ManifestEntry], str] | None = None,
     invoker: Callable[..., Any] = invoke_agent,
 ) -> dict[str, Any]:
     blob = parse_blob_url(request["sourceUrl"])
+    # The manifest's repository is the tenant: every GitHub token in this run is minted for it.
+    commit_resolver = commit_resolver or functools.partial(latest_commit, tenant=blob.tenant)
     manifest = manifest_loader(blob)
     entries, skipped_repositories = validate_manifest(manifest, max_entries)
     updated_manifest = copy.deepcopy(manifest)
@@ -357,7 +367,7 @@ def run_manifest(
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(max_concurrency, len(changed)))) as executor:
         workflow_futures = [
             (entry, commit, executor.submit(
-                invoker, project, workflow_name, model, {"sourceUrl": entry.source_url, "deferPublication": True},
+                invoker, project, workflow_name, model, {"sourceUrl": entry.source_url, "deferPublication": True, "tenant": blob.tenant},
             ))
             for entry, commit in changed
         ]

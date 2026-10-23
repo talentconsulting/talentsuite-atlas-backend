@@ -28,12 +28,16 @@ async def handle_create(request: CreateResponse, context: ResponseContext, cance
         payload = json.loads(await context.get_input_text() or "")
         if (
             not isinstance(payload, dict)
-            or set(payload) != {"sourceUrl"}
+            or "sourceUrl" not in payload
+            or not set(payload) <= {"sourceUrl", "tenant"}
             or not isinstance(payload["sourceUrl"], str)
             or not payload["sourceUrl"].strip()
         ):
-            raise ScanError('Input must contain exactly one non-empty "sourceUrl" property.')
-        result = await asyncio.to_thread(scan, payload["sourceUrl"].strip())
+            raise ScanError('Input must contain a non-empty "sourceUrl" and an optional "tenant" (the owner/repo data repository).')
+        tenant = payload.get("tenant")
+        if tenant is not None and not isinstance(tenant, str):
+            raise ScanError('"tenant" must be an owner/repo string.')
+        result = await asyncio.to_thread(scan, payload["sourceUrl"].strip(), tenant=tenant)
     except Exception:
         logger.exception("Local-dev-config source discovery failed.")
         result = {"localDevConfigFiles": [], "excludedFiles": []}

@@ -37,6 +37,10 @@ services:
         value: ${REPO_METADATA_GENERATOR_BATCH_SIZE}
       - name: REPO_METADATA_GENERATOR_CONCURRENCY
         value: ${REPO_METADATA_GENERATOR_CONCURRENCY}
+      - name: GITHUB_APP_ID
+        value: ${{connections.atlas-github-app.credentials.app_id}}
+      - name: GITHUB_APP_PRIVATE_KEY
+        value: ${{connections.atlas-github-app.credentials.private_key}}
     kind: hosted
     name: repo-metadata-workflow
     displayName: .NET Version Workflow

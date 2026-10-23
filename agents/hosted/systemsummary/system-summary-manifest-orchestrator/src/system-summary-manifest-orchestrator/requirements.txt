@@ -2,3 +2,4 @@ azure-ai-agentserver-responses==1.0.0b9
 azure-ai-projects==2.3.0
 azure-identity==1.25.3
 httpx==0.28.1
+PyJWT[crypto]==2.10.1

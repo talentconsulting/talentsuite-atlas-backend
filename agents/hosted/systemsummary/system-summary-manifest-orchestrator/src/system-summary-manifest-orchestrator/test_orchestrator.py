@@ -1,9 +1,11 @@
 import json
 import threading
 import unittest
+from unittest.mock import patch
 
 from orchestrator import (
     ManifestError,
+    _fetch_json,
     build_generator_input,
     parse_blob_url,
     parse_request,
@@ -214,6 +216,64 @@ class RunManifestTests(unittest.TestCase):
             [(failure["repository"], failure["stage"]) for failure in result["failures"]],
         )
         self.assertEqual([], published)
+
+
+class TenantTokenTests(unittest.TestCase):
+    def test_catalogue_files_are_read_with_the_manifest_repositorys_token(self):
+        requests = []
+        bodies = {
+            "https://api.github.com/repos/org/catalogue/contents/manifest.json?ref=main": [APP_ENTRY],
+            "https://api.github.com/repos/org/catalogue/contents/app/db-schema/database.schema.json?ref=main": DATABASE,
+            "https://api.github.com/repos/org/catalogue/contents/app/event-catalog/events-and-commands.json?ref=main": EVENTS,
+            "https://api.github.com/repos/org/catalogue/contents/app/service-dependencies/service-dependencies.json?ref=main": DEPENDENCIES,
+            "https://api.github.com/repos/org/catalogue/contents/app/open-api?ref=main": CONTROLLERS,
+        }
+
+        class Response:
+            def __init__(self, body): self.body = body
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self, size): return self.body
+
+        def urlopen(request, timeout):
+            requests.append(request)
+            return Response(json.dumps(bodies[request.full_url]).encode("utf-8"))
+
+        def invoke(project, name, model, payload, max_attempts=2):
+            self.assertEqual(DATABASE, payload["database"])
+            self.assertEqual(["OrdersController"], payload["apiControllers"])
+            return SUMMARY
+
+        with patch("orchestrator.github_app.read_token", side_effect=lambda tenant: f"token-for-{tenant}") as read_token, \
+                patch("orchestrator.urllib.request.urlopen", side_effect=urlopen):
+            result = run_manifest(
+                object(), {"sourceUrl": MANIFEST_URL, "deferPublication": True},
+                "generator", "publisher", "gpt-4o", invoker=invoke,
+            )
+        self.assertTrue(result["success"])
+        read_token.assert_called_once_with("org/catalogue")
+        self.assertEqual(5, len(requests))
+        self.assertTrue(all(request.get_header("Authorization") == "Bearer token-for-org/catalogue" for request in requests))
+        accepts = {request.full_url: request.get_header("Accept") for request in requests}
+        self.assertEqual("application/vnd.github.raw", accepts["https://api.github.com/repos/org/catalogue/contents/manifest.json?ref=main"])
+        self.assertEqual("application/vnd.github+json", accepts["https://api.github.com/repos/org/catalogue/contents/app/open-api?ref=main"])
+
+    def test_without_a_token_files_are_read_anonymously_from_raw(self):
+        requests = []
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self, size): return b"[]"
+
+        def urlopen(request, timeout):
+            requests.append(request)
+            return Response()
+
+        with patch("orchestrator.urllib.request.urlopen", side_effect=urlopen):
+            _fetch_json("https://raw.githubusercontent.com/org/catalogue/main/manifest.json")
+        self.assertEqual("https://raw.githubusercontent.com/org/catalogue/main/manifest.json", requests[0].full_url)
+        self.assertIsNone(requests[0].get_header("Authorization"))
 
 
 if __name__ == "__main__":

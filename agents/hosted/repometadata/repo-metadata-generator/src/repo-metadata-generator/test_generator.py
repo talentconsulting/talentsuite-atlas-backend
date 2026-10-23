@@ -1,5 +1,8 @@
+import json
 import unittest
+from unittest import mock
 
+import generator
 from generator import (
     GenerationError,
     SourceLocation,
@@ -311,6 +314,37 @@ class GenerateFromTextDotnetSupportTests(unittest.TestCase):
             ["net8.0", "net9.0"],
             [item["targetFramework"] for item in result["dotnetSupport"]],
         )
+
+
+class TenantTokenTests(unittest.TestCase):
+    def test_commit_date_is_read_with_the_tenants_token(self):
+        requests = []
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self): return json.dumps({"commit": {"committer": {"date": LAST_COMMIT_DATE}}}).encode("utf-8")
+
+        def urlopen(request, timeout):
+            requests.append(request)
+            return Response()
+
+        blob = "https://github.com/owner/repo/blob/main/src/App/App.csproj"
+        with mock.patch.object(generator.github_app, "read_token", return_value="installation-token") as read_token, \
+                mock.patch.object(generator.urllib.request, "urlopen", side_effect=urlopen):
+            result = generate_from_text(
+                json.dumps({"sourceUrl": SOURCE_URL, "sourceFiles": [blob], "tenant": "tenant/atlas"}),
+                source_loader=lambda location, paths: {"src/App/App.csproj": "<Project />"},
+            )
+        read_token.assert_called_once_with("tenant/atlas")
+        self.assertEqual(LAST_COMMIT_DATE, result["lastCommitDate"])
+        self.assertEqual("https://api.github.com/repos/owner/repo/commits/main", requests[0].full_url)
+        self.assertEqual("Bearer installation-token", requests[0].get_header("Authorization"))
+
+    def test_tenant_must_be_a_string(self):
+        blob = "https://github.com/owner/repo/blob/main/src/App/App.csproj"
+        with self.assertRaises(GenerationError):
+            parse_input(json.dumps({"sourceUrl": SOURCE_URL, "sourceFiles": [blob], "tenant": 1}))
 
 
 if __name__ == "__main__":

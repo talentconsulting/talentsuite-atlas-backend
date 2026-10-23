@@ -75,6 +75,8 @@ def parse_workflow_request(input_text: str) -> dict[str, Any]:
         "pullRequestBody",
         "deferPublication",
         "apiFiles",
+        # The tenant's owner/repo data repository; discovery mints its GitHub read token for that tenant.
+        "tenant",
     }
     if not set(payload).issubset(allowed):
         raise WorkflowError("invalid_input", "Input contains unsupported properties.")
@@ -224,7 +226,8 @@ def run_workflow(
         # skip calling the discovery agent again.
         api_files = validate_discovery_output(override, request["sourceUrl"], max_files)
     else:
-        discovery = invoker(project, discovery_name, model, {"sourceUrl": request["sourceUrl"]})
+        discovery_request = {"sourceUrl": request["sourceUrl"], **({"tenant": request["tenant"]} if request.get("tenant") else {})}
+        discovery = invoker(project, discovery_name, model, discovery_request)
         api_files = validate_discovery_output(discovery, request["sourceUrl"], max_files)
     if not api_files:
         # No candidate controller files means there is no REST API surface to document -- a

@@ -25,6 +25,10 @@ services:
     environmentVariables:
       - name: GITHUB_PR_TOKEN
         value: ${{connections.openapi-pr-github.credentials.github_token}}
+      - name: GITHUB_APP_ID
+        value: ${{connections.atlas-github-app.credentials.app_id}}
+      - name: GITHUB_APP_PRIVATE_KEY
+        value: ${{connections.atlas-github-app.credentials.private_key}}
     kind: hosted
     name: openapi-spec-pr-creator
     displayName: OpenAPI Spec PR Creator

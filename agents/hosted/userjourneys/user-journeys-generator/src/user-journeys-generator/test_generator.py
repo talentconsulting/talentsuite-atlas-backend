@@ -1,6 +1,8 @@
 import json
 import unittest
+from unittest import mock
 
+import generator
 from generator import GenerationError, generate_from_text
 
 
@@ -31,7 +33,7 @@ def journey(**overrides):
             "hub": None, "sections": [], "then": [], **overrides}
 
 
-def loader(location, paths):
+def loader(location, paths, tenant=None):
     return {path: "public IActionResult Apply() {}" for path in paths}
 
 
@@ -121,6 +123,54 @@ class JourneyTests(unittest.TestCase):
         result = self.run_model([journey(steps=["Vacancy", "Apply"]), journey(), journey(name="apply")])
         self.assertEqual(1, len(result["journeys"]))
         self.assertEqual(2, len(result["warnings"]))
+
+
+class TenantTests(unittest.TestCase):
+    def test_describe_passes_the_tenant_to_the_source_loader(self):
+        seen = []
+
+        def tenant_loader(location, paths, tenant=None):
+            seen.append(tenant)
+            return loader(location, paths)
+
+        generate_from_text(describe_input(tenant="tenant/atlas"), completion=lambda i, p: '{"pages":[],"transitions":[]}',
+                           source_loader=tenant_loader)
+        self.assertEqual(["tenant/atlas"], seen)
+
+    def test_rejects_a_tenant_that_is_not_a_string(self):
+        with self.assertRaisesRegex(GenerationError, "tenant"):
+            generate_from_text(describe_input(tenant=1), completion=lambda i, p: "{}", source_loader=loader)
+
+
+class SourceDownloadTests(unittest.TestCase):
+    def download(self, token):
+        requests = []
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self, size): return b"class Apply {}"
+
+        def urlopen(request, timeout):
+            requests.append(request)
+            return Response()
+
+        with mock.patch.object(generator.github_app, "read_token", return_value=token) as read_token, \
+                mock.patch.object(generator.urllib.request, "urlopen", side_effect=urlopen):
+            generator._download(generator.parse_source_url(SOURCE), ["src/App.cs"], "tenant/atlas")
+        read_token.assert_called_once_with("tenant/atlas")
+        return requests[0]
+
+    def test_the_tenants_token_reads_through_the_contents_api(self):
+        request = self.download("installation-token")
+        self.assertEqual("https://api.github.com/repos/owner/app/contents/src/App.cs?ref=main", request.full_url)
+        self.assertEqual("Bearer installation-token", request.get_header("Authorization"))
+        self.assertEqual("application/vnd.github.raw", request.get_header("Accept"))
+
+    def test_without_a_token_the_raw_file_is_read(self):
+        request = self.download(None)
+        self.assertEqual("https://raw.githubusercontent.com/owner/app/main/src/App.cs", request.full_url)
+        self.assertIsNone(request.get_header("Authorization"))
 
 
 if __name__ == "__main__":

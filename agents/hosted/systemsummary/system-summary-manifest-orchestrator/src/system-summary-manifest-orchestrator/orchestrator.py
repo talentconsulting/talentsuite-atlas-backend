@@ -9,8 +9,8 @@ repository as one file.
 
 from __future__ import annotations
 
+import functools
 import json
-import os
 import re
 import urllib.error
 import urllib.parse
@@ -19,11 +19,13 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable
 
+import github_app
+
 
 # Without a token GitHub allows 60 API requests an hour per IP, which one run (a contents listing
 # per repository) exhausts; with one it is 5,000. Same connection the other orchestrators use to
 # read the catalogue repository.
-GITHUB_TOKEN = os.getenv("GITHUB_READ_TOKEN")
+RAW_PREFIX = "https://raw.githubusercontent.com/"
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_ENTRIES = 50
 OPENAPI_SUFFIX = ".openapi.json"
@@ -44,6 +46,11 @@ class GitHubBlob:
     repository: str
     ref: str
     path: str
+
+    @property
+    def tenant(self) -> str:
+        """The data repository holding the manifest identifies the tenant."""
+        return f"{self.owner}/{self.repository}"
 
 
 def parse_request(input_text: str) -> dict[str, Any]:
@@ -86,11 +93,17 @@ def parse_blob_url(value: str) -> GitHubBlob:
     return GitHubBlob(owner, repository.removesuffix(".git"), ref, path)
 
 
-def _fetch_json(url: str) -> Any | None:
+def _fetch_json(url: str, token: str | None = None) -> Any | None:
     """Fetch and parse JSON from url. Returns None on a 404 (the file or directory does not exist)."""
     headers = {"User-Agent": "system-summary-manifest-orchestrator", "Accept": "application/vnd.github+json"}
-    if GITHUB_TOKEN:
-        headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+        if url.startswith(RAW_PREFIX):
+            # The contents API accepts App installation tokens; raw.githubusercontent.com is for anonymous reads.
+            # _raw_url quotes the ref, so the first three segments are always owner, repository and ref.
+            owner, repository, ref, path = url[len(RAW_PREFIX):].split("/", 3)
+            url = f"https://api.github.com/repos/{owner}/{repository}/contents/{path}?ref={ref}"
+            headers["Accept"] = "application/vnd.github.raw"
     request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
@@ -111,7 +124,7 @@ def _fetch_json(url: str) -> Any | None:
 
 def _raw_url(blob: GitHubBlob, path: str) -> str:
     return (
-        f"https://raw.githubusercontent.com/{urllib.parse.quote(blob.owner, safe='')}/"
+        f"{RAW_PREFIX}{urllib.parse.quote(blob.owner, safe='')}/"
         f"{urllib.parse.quote(blob.repository, safe='')}/{urllib.parse.quote(blob.ref, safe='')}/"
         f"{urllib.parse.quote(path, safe='/')}"
     )
@@ -229,10 +242,12 @@ def run_manifest(
     model: str,
     max_entries: int = MAX_ENTRIES,
     workflow_concurrency: int = 4,
-    fetch: Callable[[str], Any] = _fetch_json,
+    fetch: Callable[[str], Any] | None = None,
     invoker: Callable[..., Any] = invoke_agent,
 ) -> dict[str, Any]:
     blob = parse_blob_url(request["sourceUrl"])
+    # The manifest's repository is the tenant: every file this run reads is in it, so one read token covers the run.
+    fetch = fetch or functools.partial(_fetch_json, token=github_app.read_token(blob.tenant))
     manifest = download_manifest(blob, fetch)
     if not isinstance(manifest, list) or not manifest:
         raise ManifestError("invalid_manifest", "The manifest must be a non-empty array.")

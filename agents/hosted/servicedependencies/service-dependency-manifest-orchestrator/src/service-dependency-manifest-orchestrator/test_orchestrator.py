@@ -59,7 +59,7 @@ class ManifestTests(unittest.TestCase):
             ref="feature-x", scan_path="src", path_to_scan="tree/feature-x/src", last_commit="",
         )
 
-        def fake_read_url(url):
+        def fake_read_url(url, token=None, accept=None):
             if url == "https://api.github.com/repos/source/app":
                 return json.dumps({"default_branch": "main"}).encode("utf-8")
             raise AssertionError(f"unexpected URL {url}")
@@ -74,7 +74,7 @@ class ManifestTests(unittest.TestCase):
             ref="main", scan_path="src", path_to_scan="tree/main/src", last_commit="",
         )
 
-        def fake_read_url(url):
+        def fake_read_url(url, token=None, accept=None):
             if url == "https://api.github.com/repos/source/app":
                 return json.dumps({"default_branch": "main"}).encode("utf-8")
             if url == "https://api.github.com/repos/source/app/commits/main":
@@ -115,6 +115,10 @@ class ManifestTests(unittest.TestCase):
         def invoke(project, name, model, payload, max_attempts=2):
             calls.append((name, payload))
             if name == "workflow":
+                self.assertEqual(
+                    {"sourceUrl": "https://github.com/source/app/tree/main/src", "deferPublication": True, "tenant": "target/catalogs"},
+                    payload,
+                )
                 return {"success": True, "catalogs": [{"sourceUrl": payload["sourceUrl"], "catalog": CATALOG}]}
             self.assertEqual(["service-dependencies"], payload["manifestNodes"])
             self.assertEqual(NEW_SHA, payload["manifestFile"]["content"][0]["service-dependencies"]["last-commit-hash-scanned"])
@@ -255,6 +259,30 @@ class ManifestTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ManifestError, "entry 30.service-dependencies"):
             validate_manifest(oversized, 25)
+
+
+class TenantTokenTests(unittest.TestCase):
+    def test_manifest_and_commits_are_read_with_the_manifest_repositorys_token(self):
+        reads = []
+
+        def fake_read_url(url, token=None, accept=None):
+            reads.append((url, token, accept))
+            if url.endswith("/repos/source/app"):
+                return json.dumps({"default_branch": "main"}).encode("utf-8")
+            if url.endswith("/commits/main"):
+                return json.dumps({"sha": NEW_SHA}).encode("utf-8")
+            return json.dumps(manifest(NEW_SHA)).encode("utf-8")
+
+        with patch("orchestrator.github_app.read_token", side_effect=lambda tenant: f"token-for-{tenant}") as read_token, \
+                patch("orchestrator._read_url", side_effect=fake_read_url):
+            result = run_manifest(object(), {"sourceUrl": MANIFEST_URL}, "workflow", "publisher", "gpt-4o")
+        self.assertEqual("up_to_date", result["status"])
+        self.assertEqual({"target/catalogs"}, {call.args[0] for call in read_token.call_args_list})
+        self.assertEqual(
+            ("https://api.github.com/repos/target/catalogs/contents/manifest.json?ref=main", "token-for-target/catalogs", "application/vnd.github.raw"),
+            reads[0],
+        )
+        self.assertTrue(all(token == "token-for-target/catalogs" for _url, token, _accept in reads))
 
 
 if __name__ == "__main__":

@@ -1,4 +1,6 @@
+import io
 import unittest
+import zipfile
 from unittest import mock
 
 import scanner
@@ -219,6 +221,40 @@ class ScanTests(unittest.TestCase):
 
         self.assertEqual(1, len(supporting))
         self.assertTrue(supporting[0].endswith("/StatusResponse.cs"))
+
+
+class ArchiveDownloadTests(unittest.TestCase):
+    def download(self, token):
+        requests = []
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w"):
+            pass
+
+        class Response:
+            headers = {}
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self, size): return archive.getvalue()
+
+        def urlopen(request, timeout):
+            requests.append(request)
+            return Response()
+
+        with mock.patch.object(scanner.github_app, "read_token", return_value=token) as read_token, \
+                mock.patch.object(scanner.urllib.request, "urlopen", side_effect=urlopen):
+            scanner._download_sources(parse_source_url(SOURCE_URL), "tenant/atlas")
+        read_token.assert_called_once_with("tenant/atlas")
+        return requests[0]
+
+    def test_the_tenants_token_downloads_through_the_api(self):
+        request = self.download("installation-token")
+        self.assertEqual("https://api.github.com/repos/example/catalog/zipball/feature-api", request.full_url)
+        self.assertEqual("Bearer installation-token", request.get_header("Authorization"))
+
+    def test_without_a_token_the_public_archive_is_downloaded(self):
+        request = self.download(None)
+        self.assertEqual("https://codeload.github.com/example/catalog/zip/feature-api", request.full_url)
+        self.assertIsNone(request.get_header("Authorization"))
 
 
 if __name__ == "__main__":

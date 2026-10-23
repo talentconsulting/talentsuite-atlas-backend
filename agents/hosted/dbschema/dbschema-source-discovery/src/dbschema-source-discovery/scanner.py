@@ -13,9 +13,6 @@ from dataclasses import dataclass
 import github_app
 
 
-# Authenticated GitHub requests get a 5,000/hour rate limit instead of the 60/hour anonymous
-# limit that a repeatedly-invoked discovery agent can exhaust quickly. Reuses the same PAT the
-# PR-creator agents already hold for writes.
 MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 250 * 1024 * 1024
 MAX_FILES = 100
