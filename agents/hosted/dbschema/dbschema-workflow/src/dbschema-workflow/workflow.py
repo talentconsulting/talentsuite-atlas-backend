@@ -75,6 +75,8 @@ def parse_workflow_request(input_text: str) -> dict[str, Any]:
         "pullRequestTitle",
         "pullRequestBody",
         "deferPublication",
+        # The tenant's owner/repo data repository; discovery mints its GitHub read token for that tenant.
+        "tenant",
     }
     if not set(payload).issubset(allowed):
         raise WorkflowError("invalid_input", "Input contains unsupported properties.")
@@ -305,7 +307,8 @@ def run_workflow(
     source_url = request["sourceUrl"]
     batch_errors: list[dict[str, Any]] = []
     try:
-        discovery = invoker(project, discovery_name, model, {"sourceUrl": source_url})
+        discovery_request = {"sourceUrl": source_url, **({"tenant": request["tenant"]} if request.get("tenant") else {})}
+        discovery = invoker(project, discovery_name, model, discovery_request)
         discovered = validate_discovery_output(discovery, source_url, max_files)
         schema_files = discovered["schemaFiles"]
         if not schema_files:

@@ -10,11 +10,10 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass
 
+import github_app
 from navigation import extract, find_web_projects
 
 
-# Authenticated GitHub requests get a 5,000/hour rate limit instead of the 60/hour anonymous limit.
-GITHUB_TOKEN = os.getenv("GITHUB_READ_TOKEN")
 MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 250 * 1024 * 1024
 MAX_FILE_BYTES = 512 * 1024
@@ -67,14 +66,15 @@ def _blob(location: SourceLocation, path: str) -> str:
     )
 
 
-def _download_archive(location: SourceLocation) -> bytes:
-    url = (
-        f"https://codeload.github.com/{urllib.parse.quote(location.owner, safe='')}/"
-        f"{urllib.parse.quote(location.repository, safe='')}/zip/{urllib.parse.quote(location.ref, safe='')}"
-    )
+def _download_archive(location: SourceLocation, tenant: str | None = None) -> bytes:
+    owner, repository, ref = (urllib.parse.quote(value, safe="") for value in (location.owner, location.repository, location.ref))
+    url = f"https://codeload.github.com/{owner}/{repository}/zip/{ref}"
     headers = {"User-Agent": "user-journeys-source-discovery"}
-    if GITHUB_TOKEN:
-        headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+    token = github_app.read_token(tenant)
+    if token:
+        # The API's zipball endpoint accepts App installation tokens and redirects to a signed codeload URL.
+        url = f"https://api.github.com/repos/{owner}/{repository}/zipball/{ref}"
+        headers["Authorization"] = f"Bearer {token}"
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=120) as response:
             body = response.read(MAX_ARCHIVE_BYTES + 1)
@@ -143,9 +143,9 @@ def _batches(location: SourceLocation, graph: dict, files: dict[str, str]) -> li
     ]
 
 
-def scan(source_url: str, archive_bytes: bytes | None = None) -> dict[str, object]:
+def scan(source_url: str, archive_bytes: bytes | None = None, tenant: str | None = None) -> dict[str, object]:
     location = parse_source_url(source_url)
-    files, excluded = _read_sources(location, archive_bytes if archive_bytes is not None else _download_archive(location))
+    files, excluded = _read_sources(location, archive_bytes if archive_bytes is not None else _download_archive(location, tenant))
     projects = find_web_projects(list(files))
     graph = {"pages": [], "transitions": [], "siteNavigation": [], "unresolved": [], "selfLinkCount": 0, "pageFiles": {}}
     multiple = len(projects) > 1

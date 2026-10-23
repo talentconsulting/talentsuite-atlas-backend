@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import functools
 import json
-import os
 import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Callable
+
+import github_app
 
 
 MAX_SOURCE_FILES = 100
@@ -80,8 +82,12 @@ def parse_input(user_input: str) -> dict[str, Any]:
         payload = json.loads(user_input)
     except json.JSONDecodeError as error:
         raise GenerationError("invalid_input", "Input must be one JSON object.") from error
-    if not isinstance(payload, dict) or set(payload) != {"sourceUrl", "sourceFiles"}:
-        raise GenerationError("invalid_input", "Input must contain exactly sourceUrl and sourceFiles.")
+    if not isinstance(payload, dict) or not {"sourceUrl", "sourceFiles"} <= set(payload) <= {"sourceUrl", "sourceFiles", "tenant"}:
+        raise GenerationError("invalid_input", "Input must contain exactly sourceUrl and sourceFiles, and an optional tenant.")
+    # The tenant's owner/repo data repository; the commit lookup mints its GitHub read token for that tenant.
+    tenant = payload.get("tenant")
+    if tenant is not None and not isinstance(tenant, str):
+        raise GenerationError("invalid_input", "tenant must be an owner/repo string.")
     location = parse_source_url(payload["sourceUrl"])
     files = payload["sourceFiles"]
     if not isinstance(files, list) or not files or len(files) > MAX_SOURCE_FILES:
@@ -94,7 +100,7 @@ def parse_input(user_input: str) -> dict[str, Any]:
             raise GenerationError("invalid_input", "sourceFiles must not contain duplicates.")
         seen.add(path)
         paths.append(path)
-    return {"location": location, "paths": paths}
+    return {"location": location, "paths": paths, "tenant": tenant}
 
 
 def _download_selected_sources(location: SourceLocation, paths: list[str]) -> dict[str, str]:
@@ -126,7 +132,7 @@ def _download_selected_sources(location: SourceLocation, paths: list[str]) -> di
     return sources
 
 
-def _fetch_last_commit_date(location: SourceLocation) -> str:
+def _fetch_last_commit_date(location: SourceLocation, tenant: str | None = None) -> str:
     url = (
         f"https://api.github.com/repos/{urllib.parse.quote(location.owner, safe='')}/"
         f"{urllib.parse.quote(location.repository, safe='')}/commits/{urllib.parse.quote(location.ref, safe='')}"
@@ -136,7 +142,7 @@ def _fetch_last_commit_date(location: SourceLocation) -> str:
         f"Unable to determine the last commit date for {location.owner}/{location.repository}@{location.ref}.",
     )
     headers = {"User-Agent": "repo-metadata-generator"}
-    token = os.environ.get("GITHUB_READ_TOKEN")
+    token = github_app.read_token(tenant)
     if token:
         headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, headers=headers)
@@ -388,10 +394,11 @@ def validate_catalog(
 def generate_from_text(
     user_input: str,
     source_loader: Callable[[SourceLocation, list[str]], dict[str, str]] = _download_selected_sources,
-    commit_date_loader: Callable[[SourceLocation], str] = _fetch_last_commit_date,
+    commit_date_loader: Callable[[SourceLocation], str] | None = None,
 ) -> dict[str, Any]:
     parsed = parse_input(user_input)
     location: SourceLocation = parsed["location"]
+    commit_date_loader = commit_date_loader or functools.partial(_fetch_last_commit_date, tenant=parsed["tenant"])
     sources = source_loader(location, parsed["paths"])
     last_commit_date = commit_date_loader(location)
     catalog = _build_catalog(location, sources, last_commit_date)

@@ -44,6 +44,24 @@ Each `*-source-discovery` agent resolves `GITHUB_READ_TOKEN` from `${{connection
 
 Note: the `*-manifest-orchestrator` agents also read `GITHUB_READ_TOKEN` (currently still `openapi-pr-github`), but only to fetch `manifest.json` from the same destination catalogue repository that token is already scoped to -- that usage is correctly scoped and doesn't need `github-source-read`. However, those orchestrators separately check each manifest entry's *source* repository branch-head commit via the GitHub API using the same token, which has the identical scoping problem described above; that call site is not yet updated to use `github-source-read`.
 
+### Tenants and the Atlas GitHub App
+
+Each tenant is identified by its **data repository**: the repository that holds its `manifest.json` and generated catalogues (for DfE, `talentconsulting/talentsuite-atlas`). The manifest orchestrators take the tenant from the manifest URL and pass it down as `tenant` to the agents that read GitHub. When the Atlas GitHub App is configured, every agent mints its own short-lived installation token for that tenant:
+
+- Reads (manifest, source commits, source archives): a read-only token (`contents`, `metadata`) for the App installation covering the tenant's data repository. It can read that organisation's private repositories the App is installed on, and any public repository. It cannot read another tenant's private repositories.
+- Pull requests: a token limited to the tenant's data repository (`contents` and `pull_requests` write).
+
+Tokens are created inside the agents and never appear in a request, so they are not stored in Foundry conversation history.
+
+To set it up:
+
+1. Create a GitHub App (for example "TalentSuite Atlas") owned by the organisation that runs the pipeline. Turn off webhooks. Repository permissions: **Contents** read and write, **Pull requests** read and write, **Metadata** read. Generate a private key.
+2. Install the App on each tenant's organisation, choosing their data repository plus any private source repositories.
+3. Create a Foundry Custom keys project connection named `atlas-github-app` with two fields: `app_id` (the App ID) and `private_key` (the PEM contents; literal `\n` sequences are accepted).
+4. Redeploy the agents. Each one that reads or writes GitHub resolves `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` from `atlas-github-app`.
+
+The connection must exist before the agents are deployed, because their definitions reference it. Until the App is configured, agents fall back to `GITHUB_READ_TOKEN` (`github-source-read`) and `GITHUB_PR_TOKEN` (`openapi-pr-github`). Once runs succeed with the App, remove those environment variables from each `azure.yaml`, redeploy, and then delete the two connections.
+
 Optional `dev` environment variables are:
 
 | Variable | Default |

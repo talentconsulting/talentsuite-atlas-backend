@@ -410,5 +410,23 @@ class MergeEntityTablesTests(unittest.TestCase):
         self.assertEqual(["Orders"], [t["name"] for t in merged["tables"]])
 
 
+class TenantTests(unittest.TestCase):
+    def test_tenant_is_passed_to_discovery_only(self):
+        calls = []
+
+        def invoke(project, name, model, payload, max_attempts=2):
+            calls.append((name, payload))
+            if name == "discovery":
+                return {"schemaFiles": [FILE], "excludedFiles": []}
+            return SCHEMA
+
+        run_workflow(
+            object(), {"sourceUrl": SOURCE, "deferPublication": True, "tenant": "tenant/atlas"},
+            "discovery", "generator", "publisher", "gpt-4o", invoker=invoke,
+        )
+        self.assertEqual({"sourceUrl": SOURCE, "tenant": "tenant/atlas"}, calls[0][1])
+        self.assertNotIn("tenant", calls[1][1])
+
+
 if __name__ == "__main__":
     unittest.main()

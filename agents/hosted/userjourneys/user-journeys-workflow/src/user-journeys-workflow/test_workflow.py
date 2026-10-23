@@ -150,5 +150,25 @@ class WorkflowTests(unittest.TestCase):
             parse_workflow_request(json.dumps({"sourceUrl": "https://github.com/a/b/blob/main/x"}))
 
 
+class TenantTests(unittest.TestCase):
+    def test_tenant_is_passed_to_discovery_and_describe_only(self):
+        agents = FakeAgents()
+        run(agents, tenant="tenant/atlas")
+        discovery_payload = [p for name, p in agents.calls if name == "discovery"][0]
+        self.assertEqual({"sourceUrl": SOURCE, "tenant": "tenant/atlas"}, discovery_payload)
+        generator_payloads = {p["mode"]: p for name, p in agents.calls if name == "generator"}
+        self.assertEqual("tenant/atlas", generator_payloads["describe"]["tenant"])
+        self.assertNotIn("tenant", generator_payloads["journeys"])
+
+    def test_without_a_tenant_no_tenant_is_sent(self):
+        agents = FakeAgents()
+        run(agents)
+        self.assertTrue(all("tenant" not in payload for _name, payload in agents.calls))
+
+    def test_tenant_must_be_a_non_empty_string(self):
+        with self.assertRaisesRegex(WorkflowError, "tenant"):
+            parse_workflow_request(json.dumps({"sourceUrl": SOURCE, "deferPublication": True, "tenant": 1}))
+
+
 if __name__ == "__main__":
     unittest.main()

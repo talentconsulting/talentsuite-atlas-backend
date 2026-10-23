@@ -3,7 +3,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from workflow import WorkflowError, merge_catalogs, parse_workflow_request, run_workflow
+from workflow import WorkflowError, _fetch_last_commit_date, merge_catalogs, parse_workflow_request, run_workflow
 
 
 SOURCE = "https://github.com/source/app/tree/main/src"
@@ -125,7 +125,7 @@ class RunWorkflowTests(unittest.TestCase):
                 "gpt-4o",
                 invoker=invoke,
             )
-            commit_date_loader.assert_called_once_with("source", "app", "main")
+            commit_date_loader.assert_called_once_with("source", "app", "main", tenant=None)
 
         self.assertTrue(result["success"])
         self.assertEqual(["discovery"], calls)
@@ -414,6 +414,68 @@ class MergeCatalogsTests(unittest.TestCase):
             [{"targetFramework": "net8.0", "endOfSupport": "2026-11-10", "supportPhase": "LTS"}],
             merged["dotnetSupport"],
         )
+
+
+class TenantTests(unittest.TestCase):
+    def test_tenant_is_passed_to_discovery_and_the_generator_only(self):
+        calls = []
+
+        def invoke(project, name, model, payload, max_attempts=2):
+            calls.append((name, payload))
+            if name == "discovery":
+                return {"repoMetadataFiles": [_file(0)], "excludedFiles": []}
+            return _catalog("src/App0/App0.csproj", ["net8.0"])
+
+        run_workflow(
+            object(), {"sourceUrl": SOURCE, "deferPublication": True, "tenant": "tenant/atlas"},
+            "discovery", "generator", "pr_creator", "gpt-4o", invoker=invoke,
+        )
+        self.assertEqual({"sourceUrl": SOURCE, "tenant": "tenant/atlas"}, calls[0][1])
+        self.assertEqual({"sourceUrl": SOURCE, "sourceFiles": [_file(0)], "tenant": "tenant/atlas"}, calls[1][1])
+
+    def test_without_a_tenant_no_tenant_is_sent(self):
+        calls = []
+
+        def invoke(project, name, model, payload, max_attempts=2):
+            calls.append((name, payload))
+            if name == "discovery":
+                return {"repoMetadataFiles": [_file(0)], "excludedFiles": []}
+            return _catalog("src/App0/App0.csproj", ["net8.0"])
+
+        run_workflow(
+            object(), {"sourceUrl": SOURCE, "deferPublication": True},
+            "discovery", "generator", "pr_creator", "gpt-4o", invoker=invoke,
+        )
+        self.assertTrue(all("tenant" not in payload for _name, payload in calls))
+
+    def test_commit_date_for_an_empty_discovery_is_read_with_the_tenants_token(self):
+        def invoke(project, name, model, payload, max_attempts=2):
+            return {"repoMetadataFiles": [], "excludedFiles": []}
+
+        with patch("workflow._fetch_last_commit_date", return_value=LAST_COMMIT_DATE) as commit_date_loader:
+            run_workflow(
+                object(), {"sourceUrl": SOURCE, "deferPublication": True, "tenant": "tenant/atlas"},
+                "discovery", "generator", "pr_creator", "gpt-4o", invoker=invoke,
+            )
+        commit_date_loader.assert_called_once_with("source", "app", "main", tenant="tenant/atlas")
+
+    def test_commit_date_lookup_uses_the_tenants_read_token(self):
+        requests = []
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self): return json.dumps({"commit": {"committer": {"date": LAST_COMMIT_DATE}}}).encode("utf-8")
+
+        def urlopen(request, timeout):
+            requests.append(request)
+            return Response()
+
+        with patch("workflow.github_app.read_token", return_value="installation-token") as read_token, \
+                patch("workflow.urllib.request.urlopen", side_effect=urlopen):
+            self.assertEqual(LAST_COMMIT_DATE, _fetch_last_commit_date("source", "app", "main", tenant="tenant/atlas"))
+        read_token.assert_called_once_with("tenant/atlas")
+        self.assertEqual("Bearer installation-token", requests[0].get_header("Authorization"))
 
 
 if __name__ == "__main__":

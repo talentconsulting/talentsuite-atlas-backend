@@ -20,19 +20,23 @@ logger = logging.getLogger(__name__)
 app = ResponsesAgentServerHost()
 
 
-def extract_source_url(user_input: str) -> str:
+def extract_request(user_input: str) -> tuple[str, str | None]:
     try:
         payload = json.loads(user_input.strip())
     except json.JSONDecodeError as error:
         raise ScanError("Input must be valid JSON.") from error
     if (
         not isinstance(payload, dict)
-        or set(payload) != {"sourceUrl"}
+        or "sourceUrl" not in payload
+        or not set(payload) <= {"sourceUrl", "tenant"}
         or not isinstance(payload["sourceUrl"], str)
         or not payload["sourceUrl"].strip()
     ):
-        raise ScanError('Input must contain exactly one non-empty "sourceUrl" property.')
-    return payload["sourceUrl"].strip()
+        raise ScanError('Input must contain a non-empty "sourceUrl" and an optional "tenant" (the owner/repo data repository).')
+    tenant = payload.get("tenant")
+    if tenant is not None and not isinstance(tenant, str):
+        raise ScanError('"tenant" must be an owner/repo string.')
+    return payload["sourceUrl"].strip(), tenant
 
 
 @app.response_handler
@@ -50,8 +54,8 @@ async def handle_create(
     yield text.emit_added()
 
     try:
-        source_url = extract_source_url(await context.get_input_text() or "")
-        result = await asyncio.to_thread(scan, source_url)
+        source_url, tenant = extract_request(await context.get_input_text() or "")
+        result = await asyncio.to_thread(scan, source_url, tenant=tenant)
     except Exception as error:
         # A scan failure (bad ref, network error, malformed archive) is not the same as
         # legitimately finding zero API files -- reporting it as an empty list here would let the

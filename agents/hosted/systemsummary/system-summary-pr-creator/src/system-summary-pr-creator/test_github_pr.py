@@ -1,5 +1,6 @@
 import json
 import unittest
+from unittest.mock import patch
 
 from github_pr import PublicationError, parse_request, publish
 
@@ -74,6 +75,16 @@ class PublisherTests(unittest.TestCase):
         result = publish(payload(), client)
         self.assertEqual("unchanged", result["status"])
         self.assertFalse(any(call[1].endswith("/pulls") for call in client.calls))
+
+
+class WriteTokenTests(unittest.TestCase):
+    def test_pull_request_token_is_minted_for_the_target_repository(self):
+        with patch("github_pr.github_app.write_token", return_value="installation-token") as write_token, \
+                patch("github_pr.GitHubClient", side_effect=RuntimeError("stop after the token")) as client:
+            with self.assertRaisesRegex(RuntimeError, "stop after the token"):
+                publish(payload())
+        write_token.assert_called_once_with(payload()["repository"])
+        client.assert_called_once_with("installation-token")
 
 
 if __name__ == "__main__":

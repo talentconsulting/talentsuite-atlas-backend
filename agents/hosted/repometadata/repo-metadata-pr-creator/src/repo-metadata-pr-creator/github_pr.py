@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import posixpath
 import re
 import urllib.error
@@ -14,6 +13,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
+
+import github_app
 
 
 MAX_CATALOGS = 100
@@ -38,7 +39,7 @@ class PlannedFile:
 class GitHubClient:
     def __init__(self, token: str, api_url: str = "https://api.github.com"):
         if not token:
-            raise PublicationError("missing_github_token", "GITHUB_PR_TOKEN is not configured.")
+            raise PublicationError("missing_github_token", "Neither the Atlas GitHub App nor GITHUB_PR_TOKEN is configured.")
         self.token = token
         self.api_url = api_url.rstrip("/")
 
@@ -303,8 +304,14 @@ def _merge_manifest(existing: bytes | None, manifest: dict[str, Any]) -> bytes:
 
 def publish(payload: dict[str, Any], client: GitHubClient | None = None, branch_factory: Callable[[], str] = default_branch_name) -> dict[str, Any]:
     request = validate_request(payload)
-    github = client or GitHubClient(os.environ.get("GITHUB_PR_TOKEN", ""))
     repository = request["repository"]
+    if client is None:
+        try:
+            # A token for this one data repository only, minted from the tenant's App installation.
+            client = GitHubClient(github_app.write_token(repository))
+        except github_app.GitHubAppError as error:
+            raise PublicationError("github_app_error", str(error)) from error
+    github = client
     metadata = github.request("GET", f"/repos/{repository}")
     base_branch = request.get("baseBranch") or metadata.get("default_branch")
     if not isinstance(base_branch, str) or not base_branch:

@@ -13,9 +13,12 @@ async def handle_create(request: CreateResponse, context: ResponseContext, cance
     text = message.add_text_content(); yield text.emit_added()
     try:
         payload = json.loads(await context.get_input_text() or "")
-        if not isinstance(payload, dict) or set(payload) != {"sourceUrl"} or not isinstance(payload["sourceUrl"], str):
-            raise ScanError('Input must contain exactly one non-empty "sourceUrl" property.')
-        result = await asyncio.to_thread(scan, payload["sourceUrl"].strip())
+        if not isinstance(payload, dict) or "sourceUrl" not in payload or not set(payload) <= {"sourceUrl", "tenant"} or not isinstance(payload["sourceUrl"], str):
+            raise ScanError('Input must contain a non-empty "sourceUrl" and an optional "tenant" (the owner/repo data repository).')
+        tenant = payload.get("tenant")
+        if tenant is not None and not isinstance(tenant, str):
+            raise ScanError('"tenant" must be an owner/repo string.')
+        result = await asyncio.to_thread(scan, payload["sourceUrl"].strip(), tenant=tenant)
     except Exception:
         logger.exception("Event and command source discovery failed.")
         result = {"sourceFiles": [], "excludedFiles": []}

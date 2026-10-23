@@ -400,5 +400,23 @@ class MergeCatalogsTests(unittest.TestCase):
         self.assertEqual(1, len(merged["configurationKeys"]))
 
 
+class TenantTests(unittest.TestCase):
+    def test_tenant_is_passed_to_discovery_only(self):
+        calls = []
+
+        def invoke(project, name, model, payload, max_attempts=2):
+            calls.append((name, payload))
+            if name == "discovery":
+                return {"localDevConfigFiles": [_file(0)], "excludedFiles": []}
+            return _catalog("postgres", "database", "postgres")
+
+        run_workflow(
+            object(), {"sourceUrl": SOURCE, "deferPublication": True, "tenant": "tenant/atlas"},
+            "discovery", "generator", "pr_creator", "gpt-4o", invoker=invoke,
+        )
+        self.assertEqual({"sourceUrl": SOURCE, "tenant": "tenant/atlas"}, calls[0][1])
+        self.assertNotIn("tenant", calls[1][1])
+
+
 if __name__ == "__main__":
     unittest.main()

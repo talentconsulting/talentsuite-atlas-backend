@@ -34,6 +34,10 @@ services:
         value: ${SERVICE_DEPENDENCY_MANIFEST_CONCURRENCY}
       - name: GITHUB_READ_TOKEN
         value: ${{connections.openapi-pr-github.credentials.github_token}}
+      - name: GITHUB_APP_ID
+        value: ${{connections.atlas-github-app.credentials.app_id}}
+      - name: GITHUB_APP_PRIVATE_KEY
+        value: ${{connections.atlas-github-app.credentials.private_key}}
     kind: hosted
     name: service-dependency-manifest-orchestrator
     displayName: Service Dependency Manifest Orchestrator

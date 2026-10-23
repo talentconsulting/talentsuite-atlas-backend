@@ -22,6 +22,10 @@ services:
     environmentVariables:
       - name: GITHUB_READ_TOKEN
         value: ${{connections.github-source-read.credentials.github_token}}
+      - name: GITHUB_APP_ID
+        value: ${{connections.atlas-github-app.credentials.app_id}}
+      - name: GITHUB_APP_PRIVATE_KEY
+        value: ${{connections.atlas-github-app.credentials.private_key}}
     kind: hosted
     name: repo-metadata-source-discovery
     displayName: .NET Version Source Discovery

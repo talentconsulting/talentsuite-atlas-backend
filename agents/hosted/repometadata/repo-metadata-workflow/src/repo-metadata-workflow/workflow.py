@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
 import urllib.error
@@ -11,6 +10,8 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
+
+import github_app
 
 
 class WorkflowError(RuntimeError):
@@ -79,6 +80,9 @@ def parse_workflow_request(input_text: str) -> dict[str, Any]:
         "pullRequestTitle",
         "pullRequestBody",
         "deferPublication",
+        # The tenant's owner/repo data repository; discovery, the generator and the commit-date lookup
+        # mint their GitHub read tokens for that tenant.
+        "tenant",
     }
     if not set(payload).issubset(allowed):
         raise WorkflowError("invalid_input", "Input contains unsupported properties.")
@@ -291,7 +295,9 @@ def _generate_batch(
     invoker: Callable[..., Any],
     max_attempts: int = 3,
     retry_delay_seconds: float = 5.0,
+    tenant: str | None = None,
 ) -> dict[str, Any]:
+    generator_request = {"sourceUrl": source_url, "sourceFiles": batch, **({"tenant": tenant} if tenant else {})}
     last_error: Exception | None = None
     for attempt in range(max(1, max_attempts)):
         if attempt:
@@ -299,7 +305,7 @@ def _generate_batch(
             time.sleep(retry_delay_seconds * 2 ** (attempt - 1))
         try:
             return validate_generator_output(
-                invoker(project, generator_name, model, {"sourceUrl": source_url, "sourceFiles": batch}, max_attempts=1)
+                invoker(project, generator_name, model, generator_request, max_attempts=1)
             )
         except Exception as error:
             last_error = error
@@ -331,7 +337,7 @@ def _publisher_payload(request: dict[str, Any], catalog: dict[str, Any]) -> dict
     return payload
 
 
-def _fetch_last_commit_date(owner: str, repository: str, ref: str) -> str:
+def _fetch_last_commit_date(owner: str, repository: str, ref: str, tenant: str | None = None) -> str:
     url = (
         f"https://api.github.com/repos/{urllib.parse.quote(owner, safe='')}/"
         f"{urllib.parse.quote(repository, safe='')}/commits/{urllib.parse.quote(ref, safe='')}"
@@ -341,7 +347,7 @@ def _fetch_last_commit_date(owner: str, repository: str, ref: str) -> str:
         f"Unable to determine the last commit date for {owner}/{repository}@{ref}.",
     )
     headers = {"User-Agent": "repo-metadata-workflow"}
-    token = os.environ.get("GITHUB_READ_TOKEN")
+    token = github_app.read_token(tenant)
     if token:
         headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, headers=headers)
@@ -385,7 +391,8 @@ def run_workflow(
     source_url = request["sourceUrl"]
     batch_errors: list[dict[str, Any]] = []
     try:
-        discovery = invoker(project, discovery_name, model, {"sourceUrl": source_url})
+        discovery_request = {"sourceUrl": source_url, **({"tenant": request["tenant"]} if request.get("tenant") else {})}
+        discovery = invoker(project, discovery_name, model, discovery_request)
         discovered = validate_discovery_output(discovery)
         files = discovered["repoMetadataFiles"]
         if not files:
@@ -394,7 +401,7 @@ def run_workflow(
                 "repository": f"{owner}/{repo}",
                 "ref": ref,
                 "path": path,
-                "lastCommitDate": _fetch_last_commit_date(owner, repo, ref),
+                "lastCommitDate": _fetch_last_commit_date(owner, repo, ref, tenant=request.get("tenant")),
                 "projects": [],
                 "sdks": [],
                 "dotnetSupport": [],
@@ -415,6 +422,7 @@ def run_workflow(
                         batch,
                         invoker,
                         retry_delay_seconds=retry_delay_seconds,
+                        tenant=request.get("tenant"),
                     )
                     for batch in batches
                 ]

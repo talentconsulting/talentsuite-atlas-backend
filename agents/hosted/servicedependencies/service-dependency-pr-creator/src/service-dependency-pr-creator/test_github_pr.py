@@ -1,6 +1,7 @@
 import base64
 import json
 import unittest
+from unittest.mock import patch
 
 from github_pr import PublicationError, parse_request, publish
 
@@ -147,6 +148,16 @@ class ManifestMergeTests(unittest.TestCase):
         for bad in ([], [""], "flow", [1]):
             with self.assertRaises(PublicationError):
                 _manifest_nodes(bad)
+
+
+class WriteTokenTests(unittest.TestCase):
+    def test_pull_request_token_is_minted_for_the_target_repository(self):
+        with patch("github_pr.github_app.write_token", return_value="installation-token") as write_token, \
+                patch("github_pr.GitHubClient", side_effect=RuntimeError("stop after the token")) as client:
+            with self.assertRaisesRegex(RuntimeError, "stop after the token"):
+                publish(payload())
+        write_token.assert_called_once_with(payload()["repository"])
+        client.assert_called_once_with("installation-token")
 
 
 if __name__ == "__main__":

@@ -1,1 +1,2 @@
 azure-ai-agentserver-responses==1.0.0b9
+PyJWT[crypto]==2.10.1

@@ -17,6 +17,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Callable
 
+import github_app
+
 
 MAX_SOURCE_FILES = 20
 MAX_FILE_BYTES = 512 * 1024
@@ -25,7 +27,6 @@ MAX_JOURNEYS = 15
 MAX_TEXT = 300
 TRIGGERS = {"link", "form-post", "redirect"}
 NOT_CONDITIONS = {"ordinary link", "always", "unconditional", "none", "n/a", "link", "standard link", "navigation link"}
-GITHUB_TOKEN = os.getenv("GITHUB_READ_TOKEN")
 
 
 class GenerationError(RuntimeError):
@@ -149,15 +150,19 @@ def parse_input(user_input: str) -> dict:
     if not isinstance(payload, dict) or payload.get("mode") not in {"describe", "journeys"}:
         raise GenerationError("invalid_input", 'Input must be a JSON object with mode "describe" or "journeys".')
     if payload["mode"] == "describe":
-        if set(payload) != {"mode", "sourceUrl", "pages", "transitions", "sourceFiles"}:
-            raise GenerationError("invalid_input", "describe input must contain exactly mode, sourceUrl, pages, transitions, sourceFiles.")
+        # tenant is optional: the owner/repo data repository the source-file read token is minted for.
+        if not {"mode", "sourceUrl", "pages", "transitions", "sourceFiles"} <= set(payload) <= {"mode", "sourceUrl", "pages", "transitions", "sourceFiles", "tenant"}:
+            raise GenerationError("invalid_input", "describe input must contain exactly mode, sourceUrl, pages, transitions, sourceFiles and an optional tenant.")
+        tenant = payload.get("tenant")
+        if tenant is not None and (not isinstance(tenant, str) or not tenant.strip()):
+            raise GenerationError("invalid_input", "tenant must be an owner/repo string.")
         location = parse_source_url(payload["sourceUrl"])
         files = _id_list(payload["sourceFiles"], "sourceFiles")
         if not files or len(files) > MAX_SOURCE_FILES:
             raise GenerationError("invalid_input", f"sourceFiles must contain between 1 and {MAX_SOURCE_FILES} files.")
         pages, transitions = _validate_graph_input(payload["pages"], payload["transitions"], {"routes", "kind", "sourceFile", "fields"})
         return {"mode": "describe", "location": location, "paths": [_blob_path(f, location) for f in files],
-                "pages": pages, "transitions": transitions}
+                "pages": pages, "transitions": transitions, "tenant": tenant}
     if set(payload) != {"mode", "repository", "pages", "transitions"}:
         raise GenerationError("invalid_input", "journeys input must contain exactly mode, repository, pages, transitions.")
     pages, transitions = _validate_graph_input(
@@ -165,15 +170,18 @@ def parse_input(user_input: str) -> dict:
     return {"mode": "journeys", "repository": payload["repository"], "pages": pages, "transitions": transitions}
 
 
-def _download(location: SourceLocation, paths: list[str]) -> dict[str, str]:
+def _download(location: SourceLocation, paths: list[str], tenant: str | None = None) -> dict[str, str]:
     sources, total = {}, 0
+    owner, repository, ref = (urllib.parse.quote(value, safe="") for value in (location.owner, location.repository, location.ref))
+    token = github_app.read_token(tenant)
     for path in paths:
-        url = (f"https://raw.githubusercontent.com/{urllib.parse.quote(location.owner, safe='')}/"
-               f"{urllib.parse.quote(location.repository, safe='')}/{urllib.parse.quote(location.ref, safe='')}/"
-               f"{urllib.parse.quote(path, safe='/')}")
+        url = f"https://raw.githubusercontent.com/{owner}/{repository}/{ref}/{urllib.parse.quote(path, safe='/')}"
         headers = {"User-Agent": "user-journeys-generator"}
-        if GITHUB_TOKEN:
-            headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+        if token:
+            # The contents API accepts App installation tokens; raw.githubusercontent.com is for anonymous reads.
+            url = f"https://api.github.com/repos/{owner}/{repository}/contents/{urllib.parse.quote(path, safe='/')}?ref={ref}"
+            headers["Authorization"] = f"Bearer {token}"
+            headers["Accept"] = "application/vnd.github.raw"
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as response:
                 content = response.read(MAX_FILE_BYTES + 1)
@@ -314,11 +322,11 @@ def validate_journeys(document: dict, pages: list[dict], transitions: list[dict]
 def generate_from_text(
     user_input: str,
     completion: Callable[[str, str], str] = _foundry_completion,
-    source_loader: Callable[[SourceLocation, list[str]], dict[str, str]] = _download,
+    source_loader: Callable[[SourceLocation, list[str], str | None], dict[str, str]] = _download,
 ) -> dict:
     request = parse_input(user_input)
     if request["mode"] == "describe":
-        sources = source_loader(request["location"], request["paths"])
+        sources = source_loader(request["location"], request["paths"], request["tenant"])
         prompt = "Describe these pages and transitions. Respond with one JSON object.\n" + json.dumps({
             "pages": request["pages"], "transitions": request["transitions"],
             "files": [{"path": p, "content": c} for p, c in sources.items()],

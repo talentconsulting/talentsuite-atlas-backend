@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import os
 import re
 import urllib.error
 import urllib.parse
@@ -12,10 +11,8 @@ import zipfile
 from collections import deque
 from dataclasses import dataclass
 
+import github_app
 
-# Authenticated GitHub requests get a much higher rate limit than the 60/hour anonymous limit.
-# Reuses the same PAT the PR-creator agents already hold for writes.
-GITHUB_TOKEN = os.getenv("GITHUB_READ_TOKEN")
 
 
 class ScanError(RuntimeError):
@@ -127,17 +124,18 @@ def _code_only(content: str) -> str:
     return COMMENT_OR_LITERAL_RE.sub(lambda match: " " * len(match.group()), content)
 
 
-def _download_sources(location: SourceLocation) -> dict[str, str]:
+def _download_sources(location: SourceLocation, tenant: str | None = None) -> dict[str, str]:
     owner = urllib.parse.quote(location.owner, safe="")
     repository = urllib.parse.quote(location.repository, safe="")
     ref = urllib.parse.quote(location.ref, safe="")
+    url = f"https://codeload.github.com/{owner}/{repository}/zip/{ref}"
     headers = {"User-Agent": "openapi-source-discovery"}
-    if GITHUB_TOKEN:
-        headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
-    request = urllib.request.Request(
-        f"https://codeload.github.com/{owner}/{repository}/zip/{ref}",
-        headers=headers,
-    )
+    token = github_app.read_token(tenant)
+    if token:
+        # The API's zipball endpoint accepts App installation tokens and redirects to a signed codeload URL.
+        url = f"https://api.github.com/repos/{owner}/{repository}/zipball/{ref}"
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=120) as response:
             content_length = int(response.headers.get("Content-Length", "0") or "0")
@@ -281,9 +279,9 @@ def _blob_url(location: SourceLocation, path: str) -> str:
     )
 
 
-def scan(source_url: str, sources: dict[str, str] | None = None) -> list[dict[str, object]]:
+def scan(source_url: str, sources: dict[str, str] | None = None, tenant: str | None = None) -> list[dict[str, object]]:
     location = parse_source_url(source_url)
-    repository_sources = sources if sources is not None else _download_sources(location)
+    repository_sources = sources if sources is not None else _download_sources(location, tenant)
     api_sources = [
         (path, content)
         for path, content in sorted(repository_sources.items())
