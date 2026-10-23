@@ -280,6 +280,28 @@ class RunWorkflowTests(unittest.TestCase):
         self.assertEqual("generation_failed", result["errors"][0]["code"])
         self.assertEqual(2, len(result["generationErrors"]))
 
+    def test_run_workflow_fails_when_discovered_files_produce_an_empty_catalog(self):
+        discovery = {"localDevConfigFiles": [_file(0), _file(1)], "excludedFiles": []}
+
+        def invoke(project, name, model, payload, max_attempts=2):
+            if name == "discovery":
+                return discovery
+            return {**_catalog("unused", "database", "postgres"), "localServices": [], "configurationKeys": []}
+
+        result = run_workflow(
+            object(),
+            {"sourceUrl": SOURCE, "deferPublication": True},
+            "discovery",
+            "generator",
+            "pr_creator",
+            "gpt-4o",
+            invoker=invoke,
+        )
+
+        self.assertFalse(result["success"])
+        self.assertEqual([], result["catalogs"])
+        self.assertEqual("empty_catalog", result["errors"][0]["code"])
+
 
 class MergeCatalogsTests(unittest.TestCase):
     def test_merge_catalogs_unit_tests(self):

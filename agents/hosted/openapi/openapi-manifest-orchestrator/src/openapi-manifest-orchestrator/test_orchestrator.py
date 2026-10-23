@@ -189,6 +189,7 @@ class ManifestTests(unittest.TestCase):
                 }
             if name == "publisher":
                 self.assertEqual(1, max_attempts)
+                self.assertEqual(["specs"], payload["manifestNodes"])
                 self.assertEqual(NEW_SHA, payload["manifestFile"]["content"][0]["specs"]["last-commit-hash-scanned"])
                 self.assertEqual(
                     "app/open-api/BidsController.openapi.json",

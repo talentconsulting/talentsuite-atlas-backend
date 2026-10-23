@@ -156,6 +156,7 @@ class ManifestTests(unittest.TestCase):
                 }
             if name == "publisher":
                 self.assertEqual(1, max_attempts)
+                self.assertEqual(["dbschema", "db-schema"], payload["manifestNodes"])
                 self.assertEqual(
                     NEW_SHA,
                     payload["manifestFile"]["content"][0]["dbschema"]["last-commit-hash-scanned"],

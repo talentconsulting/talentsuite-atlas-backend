@@ -395,6 +395,8 @@ def run_manifest(
             "catalogs": combined_catalogs,
             "baseBranch": blob.ref,
             "manifestFile": {"path": blob.path, "content": updated_manifest},
+            # The PR creator applies only these nodes to the manifest as it is when the PR is opened.
+            "manifestNodes": [MANIFEST_NODE],
             "pullRequestTitle": "Update generated .NET version catalog",
             "pullRequestBody": (
                 "Generated .NET version catalog for repositories whose branch-head commit changed. "

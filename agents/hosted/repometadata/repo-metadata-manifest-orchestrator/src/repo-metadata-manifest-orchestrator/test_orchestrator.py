@@ -188,6 +188,7 @@ class ManifestTests(unittest.TestCase):
         # though a pull request was published for the repository that did succeed.
         self.assertFalse(result["success"])
         self.assertIsNotNone(result["pullRequest"])
+        self.assertEqual(["repo-metadata"], published["manifestNodes"])
         manifest_sent = published["manifestFile"]["content"]
         self.assertEqual(NEW_SHA, manifest_sent[0][MANIFEST_NODE]["last-commit-hash-scanned"])
         self.assertEqual(OLD_SHA, manifest_sent[1][MANIFEST_NODE]["last-commit-hash-scanned"])

@@ -520,6 +520,8 @@ def run_manifest(
             "specifications": combined_specs,
             "baseBranch": blob.ref,
             "manifestFile": {"path": blob.path, "content": updated_manifest},
+            # The PR creator applies only these nodes to the manifest as it is when the PR is opened.
+            "manifestNodes": ["specs"],
             "pullRequestTitle": "Update generated OpenAPI specifications",
             "pullRequestBody": (
                 "Generated OpenAPI specifications for repositories whose branch-head commit changed. "

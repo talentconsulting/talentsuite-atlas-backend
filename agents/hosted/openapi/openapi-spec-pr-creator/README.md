@@ -32,6 +32,7 @@ A Python hosted agent that accepts generated OpenAPI specifications, writes them
 - `pullRequestTitle` and `pullRequestBody` have generated defaults.
 - Each specification may provide `targetPath` to override its deterministic default path.
 - `manifestFile` can provide one JSON `path` and JSON-serializable `content`; it is committed atomically with the specifications.
+- `manifestNodes` (optional, requires `manifestFile`) names the manifest nodes this flow owns, for example `["local-dev-config"]`. When it is set, only those nodes are copied from `manifestFile.content` into the manifest as it is on the base branch when the pull request is opened: entries added or removed since the run started, and other flows' nodes, are left as they are, and a node whose `path-to-scan` has changed is skipped so it is rescanned. Without it, `manifestFile.content` is written as-is.
 
 For each source API, the agent writes the API filename directly beneath `targetDirectory` and changes the extension to `.openapi.json`. Source directories are not reproduced. Duplicate API filenames are rejected to prevent accidental overwrites.
 

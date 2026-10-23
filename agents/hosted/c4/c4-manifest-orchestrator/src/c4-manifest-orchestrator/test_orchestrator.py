@@ -124,6 +124,7 @@ class ManifestTests(unittest.TestCase):
             calls.append((name, payload))
             if name == "workflow":
                 return {"success": True, "catalogs": [{"sourceUrl": payload["sourceUrl"], "catalog": CATALOG}]}
+            self.assertEqual(["c4"], payload["manifestNodes"])
             self.assertEqual(NEW_SHA, payload["manifestFile"]["content"][0]["c4"]["last-commit-hash-scanned"])
             self.assertEqual("app/c4", payload["catalogs"][0]["targetDirectory"])
             return {"success": True, "status": "created"}

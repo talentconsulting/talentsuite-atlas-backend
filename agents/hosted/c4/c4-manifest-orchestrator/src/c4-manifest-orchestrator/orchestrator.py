@@ -375,6 +375,8 @@ def run_manifest(
             "catalogs": combined_catalogs,
             "baseBranch": blob.ref,
             "manifestFile": {"path": blob.path, "content": updated_manifest},
+            # The PR creator applies only these nodes to the manifest as it is when the PR is opened.
+            "manifestNodes": [MANIFEST_NODE],
             "pullRequestTitle": "Update generated C4 catalogs",
             "pullRequestBody": (
                 "Generated c4 catalogs for repositories whose branch-head commit changed. "

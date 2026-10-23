@@ -179,7 +179,7 @@ def _validate_branch(value: str, field: str) -> str:
 def validate_request(payload: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         "repository", "schemas", "targetDirectory", "baseBranch", "branchName",
-        "pullRequestTitle", "pullRequestBody", "manifestFile",
+        "pullRequestTitle", "pullRequestBody", "manifestFile", "manifestNodes",
     }
     if not set(payload).issubset(allowed):
         raise PublicationError("invalid_input", "Input contains unsupported properties.")
@@ -218,6 +218,8 @@ def validate_request(payload: dict[str, Any]) -> dict[str, Any]:
         validated.append({"sourceUrl": item["sourceUrl"], "path": output_path, "content": content})
 
     manifest_file = payload.get("manifestFile")
+    if manifest_file is None and payload.get("manifestNodes") is not None:
+        raise PublicationError("invalid_manifest_file", "manifestNodes requires manifestFile.")
     validated_manifest = None
     if manifest_file is not None:
         if not isinstance(manifest_file, dict) or set(manifest_file) != {"path", "content"}:
@@ -232,7 +234,10 @@ def validate_request(payload: dict[str, Any]) -> dict[str, Any]:
         except (TypeError, ValueError) as error:
             raise PublicationError("invalid_manifest_file", "manifestFile.content must be JSON serializable.") from error
         total_bytes += len(manifest_content)
-        validated_manifest = {"path": manifest_path, "content": manifest_content}
+        validated_manifest = {
+            "path": manifest_path, "content": manifest_content,
+            "document": manifest_file["content"], "nodes": _manifest_nodes(payload.get("manifestNodes")),
+        }
     if total_bytes > MAX_TOTAL_BYTES:
         raise PublicationError("schemas_too_large", "Generated database-schema files exceed 10 MiB.")
 
@@ -276,6 +281,48 @@ def _existing_content(client: GitHubClient, repository: str, path: str, branch: 
         raise PublicationError("github_api_error", f"GitHub returned invalid content for {path}.") from error
 
 
+def _manifest_nodes(value: object) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value or any(not isinstance(node, str) or not node.strip() for node in value):
+        raise PublicationError("invalid_manifest_file", "manifestNodes must be a non-empty array of manifest node names.")
+    return [node.strip() for node in value]
+
+
+def _merge_manifest(existing: bytes | None, manifest: dict[str, Any]) -> bytes:
+    """Apply only this flow's manifest nodes to the manifest as it is now on the base branch.
+
+    The orchestrator's copy was read when its run started, so writing it back whole would undo
+    entries added, removed or updated in the meantime (including by other flows running at once).
+    Without manifestNodes the supplied manifest is written as-is, as before.
+    """
+    nodes = manifest.get("nodes")
+    if not nodes or existing is None:
+        return manifest["content"]
+    try:
+        current = json.loads(existing.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise PublicationError("invalid_manifest_file", "The base branch manifest is not valid JSON.") from error
+    supplied = manifest["document"]
+    if not isinstance(current, list) or not isinstance(supplied, list):
+        raise PublicationError("invalid_manifest_file", "Manifests must be JSON arrays.")
+    by_repository = {
+        str(entry.get("github-repo", "")).rstrip("/"): entry for entry in supplied if isinstance(entry, dict)
+    }
+    for entry in current:
+        if not isinstance(entry, dict):
+            continue
+        update = by_repository.get(str(entry.get("github-repo", "")).rstrip("/"))
+        if update is None:
+            continue
+        for node in nodes:
+            new, old = update.get(node), entry.get(node)
+            # A changed path-to-scan means the scan state no longer applies; leave it so it is rescanned.
+            if isinstance(new, dict) and isinstance(old, dict) and new.get("path-to-scan") == old.get("path-to-scan"):
+                entry[node] = new
+    return (json.dumps(current, indent=2) + "\n").encode("utf-8")
+
+
 def publish(payload: dict[str, Any], client: GitHubClient | None = None, branch_factory: Callable[[], str] = default_branch_name) -> dict[str, Any]:
     request = validate_request(payload)
     github = client or GitHubClient(os.environ.get("GITHUB_PR_TOKEN", ""))
@@ -293,8 +340,9 @@ def publish(payload: dict[str, Any], client: GitHubClient | None = None, branch_
     if request["manifestFile"] is not None:
         item = request["manifestFile"]
         existing = _existing_content(github, repository, item["path"], base_branch)
-        action = "created" if existing is None else ("unchanged" if existing == item["content"] else "updated")
-        planned.append(PlannedFile(item["path"], item["content"], action))
+        content = _merge_manifest(existing, item)
+        action = "created" if existing is None else ("unchanged" if existing == content else "updated")
+        planned.append(PlannedFile(item["path"], content, action))
 
     files_written = [{"path": item.path, "action": item.action} for item in planned]
     changed = [item for item in planned if item.action != "unchanged"]

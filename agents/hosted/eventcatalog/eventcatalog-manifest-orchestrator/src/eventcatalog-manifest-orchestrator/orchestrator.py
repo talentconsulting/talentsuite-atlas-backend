@@ -444,6 +444,8 @@ def run_manifest(
             "catalogs": combined_catalogs,
             "baseBranch": blob.ref,
             "manifestFile": {"path": blob.path, "content": updated_manifest},
+            # The PR creator applies only these nodes to the manifest as it is when the PR is opened.
+            "manifestNodes": [EVENTCATALOG_NODE, LEGACY_EVENTCATALOG_NODE],
             "pullRequestTitle": "Update generated event and command catalogs",
             "pullRequestBody": (
                 "Generated event and command catalogs for repositories whose branch-head commit changed. "

@@ -383,6 +383,15 @@ def run_workflow(
                 raise WorkflowError("generation_failed", "No batch of source files produced a valid catalog.")
             merged, merge_warnings = merge_catalogs(batch_catalogs)
             batch_errors.extend(merge_warnings)
+            # Discovery only selects files with config or registration evidence, so an empty catalog
+            # here means generation silently failed. Failing (rather than returning it) stops a
+            # manifest run publishing it over a previously good catalog and recording the commit
+            # as scanned, so the next run retries.
+            if not merged["localServices"] and not merged["configurationKeys"]:
+                raise WorkflowError(
+                    "empty_catalog",
+                    f"{len(files)} discovered files produced no local services or configuration keys.",
+                )
     except Exception as error:
         code = error.code if isinstance(error, WorkflowError) else "generation_failed"
         message = str(error) if isinstance(error, WorkflowError) else "Local dev config generation failed."

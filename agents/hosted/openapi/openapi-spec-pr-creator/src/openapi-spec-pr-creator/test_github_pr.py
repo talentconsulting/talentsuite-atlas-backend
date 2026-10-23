@@ -112,5 +112,51 @@ class GitHubPrTests(unittest.TestCase):
         self.assertEqual(2, len(tree_call[2]["tree"]))
 
 
+class ManifestMergeTests(unittest.TestCase):
+    """manifestNodes: only the flow's own nodes are applied to the manifest currently on the base branch."""
+
+    @staticmethod
+    def entry(repo, **nodes):
+        return {"github-repo": f"https://github.com/o/{repo}", **{
+            name: {"path-to-scan": path, "last-commit-hash-scanned": commit} for name, (path, commit) in nodes.items()
+        }}
+
+    def merge(self, current, supplied, nodes):
+        from github_pr import _merge_manifest
+        existing = (json.dumps(current, indent=2) + "\n").encode("utf-8")
+        content = (json.dumps(supplied, indent=2) + "\n").encode("utf-8")
+        return json.loads(_merge_manifest(existing, {"content": content, "document": supplied, "nodes": nodes}))
+
+    def test_applies_own_node_and_keeps_entries_added_since_the_run_started(self):
+        current = [self.entry("new", flow=("tree/main/src", "")), self.entry("a", flow=("tree/main/src", "old"), other=("tree/main/src", "o2"))]
+        supplied = [self.entry("a", flow=("tree/main/src", "new"), other=("tree/main/src", "stale"))]
+        merged = self.merge(current, supplied, ["flow"])
+        self.assertEqual(["https://github.com/o/new", "https://github.com/o/a"], [e["github-repo"] for e in merged])
+        self.assertEqual("new", merged[1]["flow"]["last-commit-hash-scanned"])
+        self.assertEqual("o2", merged[1]["other"]["last-commit-hash-scanned"])  # another flow's node is untouched
+
+    def test_does_not_re_add_removed_entries(self):
+        merged = self.merge([], [self.entry("gone", flow=("tree/main/src", "x"))], ["flow"])
+        self.assertEqual([], merged)
+
+    def test_skips_a_node_whose_path_to_scan_changed(self):
+        current = [self.entry("a", flow=("tree/main/api", ""))]
+        merged = self.merge(current, [self.entry("a", flow=("tree/main/src", "x"))], ["flow"])
+        self.assertEqual("", merged[0]["flow"]["last-commit-hash-scanned"])
+
+    def test_without_nodes_writes_the_supplied_manifest_unchanged(self):
+        from github_pr import _merge_manifest
+        content = b"[]\n"
+        self.assertEqual(content, _merge_manifest(b'[{"github-repo": "x"}]', {"content": content, "document": [], "nodes": None}))
+
+    def test_manifest_nodes_must_be_non_empty_strings(self):
+        from github_pr import _manifest_nodes
+        self.assertIsNone(_manifest_nodes(None))
+        self.assertEqual(["flow"], _manifest_nodes([" flow "]))
+        for bad in ([], [""], "flow", [1]):
+            with self.assertRaises(PublicationError):
+                _manifest_nodes(bad)
+
+
 if __name__ == "__main__":
     unittest.main()

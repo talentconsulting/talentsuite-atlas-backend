@@ -25,6 +25,8 @@ A hosted Foundry agent that commits validated database-schema JSON files and an 
 
 `repository` and a non-empty `schemas` array are required. Every schema requires its original GitHub tree `sourceUrl`, the generated `schema`, and a safe JSON `targetPath`. Optional fields are `baseBranch`, `branchName`, `pullRequestTitle`, `pullRequestBody`, and `manifestFile`.
 
+`manifestNodes` (optional, requires `manifestFile`) names the manifest nodes this flow owns, for example `["local-dev-config"]`. When it is set, only those nodes are copied from `manifestFile.content` into the manifest as it is on the base branch when the pull request is opened: entries added or removed since the run started, and other flows' nodes, are left as they are, and a node whose `path-to-scan` has changed is skipped so it is rescanned. Without it, `manifestFile.content` is written as-is.
+
 The agent accepts at most 100 schemas and 10 MiB of generated JSON per request. Unchanged files do not create a branch or pull request.
 
 ## GitHub connection
