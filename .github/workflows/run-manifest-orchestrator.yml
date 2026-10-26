@@ -12,7 +12,7 @@ on:
           - dev
           - test
       manifest_url:
-        description: "Manifest blob URL, e.g. https://github.com/talentconsulting/talentsuite-atlas/blob/main/manifest.json"
+        description: "Manifest blob URL, e.g. https://github.com/talentconsulting/atlas-dfe/blob/main/manifest.json"
         required: true
         type: string
       flow:

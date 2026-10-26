@@ -4,9 +4,9 @@ This repository contains Azure AI Foundry hosted agents for manifest-driven sour
 
 ## Pattern
 
-Every pipeline in this repository follows the same shape: an orchestrator fetches the manifest from `talentsuite-atlas`, then for each manifest entry a discovery agent retrieves the relevant files from the repository being analyzed and a generator agent turns them into structured artifacts, looping until every entry has been processed. Once the loop completes, one PR-creator agent commits every generated artifact back into `talentsuite-atlas` in a single pull request.
+Every pipeline in this repository follows the same shape: an orchestrator fetches the manifest from the tenant's data repository (for DfE, `atlas-dfe`), then for each manifest entry a discovery agent retrieves the relevant files from the repository being analyzed and a generator agent turns them into structured artifacts, looping until every entry has been processed. Once the loop completes, one PR-creator agent commits every generated artifact back into the tenant's data repository in a single pull request.
 
-![Every pipeline: the manifest orchestrator reads the manifest from talentsuite-atlas and runs the workflow once per changed entry. The workflow retrieves files, then creates artefacts, reading the repository being analysed. When no entries remain, the PR creator opens one pull request on talentsuite-atlas.](docs/diagrams/pipeline-pattern.svg)
+![Every pipeline: the manifest orchestrator reads the manifest from the tenant's data repository and runs the workflow once per changed entry. The workflow retrieves files, then creates artefacts, reading the repository being analysed. When no entries remain, the PR creator opens one pull request on the tenant's data repository.](docs/diagrams/pipeline-pattern.svg)
 
 ## Pipeline
 
@@ -18,7 +18,7 @@ Every pipeline in this repository follows the same shape: an orchestrator fetche
 
 ### Agent interactions and dependencies
 
-![OpenAPI flow agents: the orchestrator reads the manifest and branch heads, calls the workflow once per changed repository and sends everything to the PR creator; the workflow calls source discovery and the generator, which read the source repositories; the PR creator opens a pull request on talentsuite-atlas.](docs/diagrams/pipeline-agents.svg)
+![OpenAPI flow agents: the orchestrator reads the manifest and branch heads, calls the workflow once per changed repository and sends everything to the PR creator; the workflow calls source discovery and the generator, which read the source repositories; the PR creator opens a pull request on the tenant's data repository.](docs/diagrams/pipeline-agents.svg)
 
 Every other flow has the same five agents with its own prefix, for example `dbschema-manifest-orchestrator`, `dbschema-workflow`, `dbschema-source-discovery`, `dbschema-generator` and `dbschema-pr-creator`. A workflow can also be called directly with a source URL and a target repository. It then calls its PR creator itself instead of returning results to the orchestrator.
 
@@ -50,7 +50,7 @@ Previous workflows, scripts, prompt agents, and documentation are retained under
 
 ## Tenants and GitHub access
 
-One set of agents serves every tenant. A tenant is one customer, identified by its **data repository**: the repo that holds its `manifest.json` and the generated catalogues. Each customer has its own data repo, so their catalogues, pull requests, GitHub access and invoices stay separate. DfE's is `talentconsulting/talentsuite-atlas`. The manifest URL a run is started with names it. For each run the agents mint one-hour tokens from the TalentSuite Atlas GitHub App installation that covers the data repo: a read-only token for source code and the manifest, and a write token limited to the data repo for pull requests. Tokens stay inside the agents and are never passed in requests. Setting up the App is described in [DEPLOYMENT.md](DEPLOYMENT.md#tenants-and-the-atlas-github-app).
+One set of agents serves every tenant. A tenant is one customer, identified by its **data repository**: the repo that holds its `manifest.json` and the generated catalogues. Each customer has its own data repo, so their catalogues, pull requests, GitHub access and invoices stay separate. DfE's is `talentconsulting/atlas-dfe`. The manifest URL a run is started with names it. For each run the agents mint one-hour tokens from the TalentSuite Atlas GitHub App installation that covers the data repo: a read-only token for source code and the manifest, and a write token limited to the data repo for pull requests. Tokens stay inside the agents and are never passed in requests. Setting up the App is described in [DEPLOYMENT.md](DEPLOYMENT.md#tenants-and-the-atlas-github-app).
 
 In the diagrams, green links use the read-only token, pink links use the write token, pink boxes are what the App installation covers, dashed outlines are GitHub organisations, and the dashed orange link is a read that fails.
 
@@ -180,7 +180,7 @@ Generated file paths are deterministic and flat. By default, `src/Api/BidsContro
 
 | Input | Required | Notes |
 | --- | --- | --- |
-| `manifest_url` | Yes | Manifest blob URL, e.g. `https://github.com/talentconsulting/talentsuite-atlas/blob/main/manifest.json`. Its repository and branch become `targetRepository`/`targetBaseBranch`. |
+| `manifest_url` | Yes | Manifest blob URL, e.g. `https://github.com/talentconsulting/atlas-dfe/blob/main/manifest.json`. Its repository and branch become `targetRepository`/`targetBaseBranch`. |
 | `github_repo` | Yes | The exact `github-repo` value to match in the manifest, e.g. `https://github.com/owner/application`. |
 | `flows` | No | `all` (default) or a comma-separated subset of `openapi,dbschema,eventcatalog,service-dependency,local-dev-config,repo-metadata,user-journeys`. Only flows actually present on the matched entry ever run. |
 | `defer_publication` | No | When `true`, generates artefacts without opening pull requests. |

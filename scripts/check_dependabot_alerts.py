@@ -12,7 +12,7 @@ Required environment variables:
                              to the tenant's data repository holding the manifest.
 
 Optional environment variables:
-    MANIFEST_SOURCE_URL      The tenant's manifest. Defaults to talentsuite-atlas (DfE);
+    MANIFEST_SOURCE_URL      The tenant's manifest. Defaults to atlas-dfe (DfE);
                              the workflow sets it for each repository in ATLAS_DATA_REPOSITORIES.
 """
 
@@ -29,7 +29,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-DEFAULT_MANIFEST_SOURCE_URL = "https://github.com/talentconsulting/talentsuite-atlas/blob/main/manifest.json"
+DEFAULT_MANIFEST_SOURCE_URL = "https://github.com/talentconsulting/atlas-dfe/blob/main/manifest.json"
 API_URL = "https://api.github.com"
 ALERTS_PER_PAGE = 100
 

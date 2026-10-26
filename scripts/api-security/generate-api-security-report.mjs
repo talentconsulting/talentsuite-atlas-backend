@@ -5,7 +5,7 @@
 // other generated per-repo artifacts (db-schema, service-dependencies,
 // dependency-alerts).
 //
-// Run from a checkout of the catalogue repository (talentsuite-atlas): it reads
+// Run from a checkout of the tenant's data repository (for DfE, atlas-dfe): it reads
 // manifest.json and <repo>/open-api/*.json from the working directory and writes
 // the reports there. The ruleset ships alongside this script; the PR summary is
 // written to SUMMARY_FILE, outside the checkout, so it is never committed.

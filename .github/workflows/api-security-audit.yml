@@ -22,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         # One run per tenant data repository, or just the one chosen on a manual run.
-        repository: ${{ fromJSON(inputs.catalogue_repository && format('["{0}"]', inputs.catalogue_repository) || vars.ATLAS_DATA_REPOSITORIES || '["talentconsulting/talentsuite-atlas"]') }}
+        repository: ${{ fromJSON(inputs.catalogue_repository && format('["{0}"]', inputs.catalogue_repository) || vars.ATLAS_DATA_REPOSITORIES || '["talentconsulting/atlas-dfe"]') }}
     env:
       CATALOGUE_REPOSITORY: ${{ matrix.repository }}
     steps:

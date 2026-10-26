@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 -12 994 404" width="994" height="404" role="img" aria-label="OpenAPI flow agents: the caller sends a manifest URL to openapi-manifest-orchestrator, which reads the manifest from talentsuite-atlas and branch heads from the source repositories, calls openapi-spec-workflow once per changed repository, then sends everything to openapi-spec-pr-creator. The workflow calls openapi-source-discovery and openapi-spec-generator, which read the source repositories. The PR creator opens a pull request on talentsuite-atlas.">
-<title>OpenAPI flow agents: the caller sends a manifest URL to openapi-manifest-orchestrator, which reads the manifest from talentsuite-atlas and branch heads from the source repositories, calls openapi-spec-workflow once per changed repository, then sends everything to openapi-spec-pr-creator. The workflow calls openapi-source-discovery and openapi-spec-generator, which read the source repositories. The PR creator opens a pull request on talentsuite-atlas.</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 -12 994 404" width="994" height="404" role="img" aria-label="OpenAPI flow agents: the caller sends a manifest URL to openapi-manifest-orchestrator, which reads the manifest from the tenant's data repository (atlas-dfe) and branch heads from the source repositories, calls openapi-spec-workflow once per changed repository, then sends everything to openapi-spec-pr-creator. The workflow calls openapi-source-discovery and openapi-spec-generator, which read the source repositories. The PR creator opens a pull request on the tenant's data repository.">
+<title>OpenAPI flow agents: the caller sends a manifest URL to openapi-manifest-orchestrator, which reads the manifest from the tenant's data repository (atlas-dfe) and branch heads from the source repositories, calls openapi-spec-workflow once per changed repository, then sends everything to openapi-spec-pr-creator. The workflow calls openapi-source-discovery and openapi-spec-generator, which read the source repositories. The PR creator opens a pull request on the tenant's data repository.</title>
 <style>
 svg { --surface:#ffffff; --bg:#f5f6fb; --fg:#0b1640; --muted:#56608a; --line:#cfd5ea; --read:#00826a; --write:#d4105a; --warn:#a65400; --install:rgba(255,47,119,0.10); --install-edge:rgba(212,16,90,0.55); color:var(--fg); }
 @media (prefers-color-scheme: dark) {
@@ -78,7 +78,7 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Ar
 <text class="t-read" x="673" y="240">files</text>
 
 <rect class="box-strong" x="765" y="280" width="175" height="80" rx="8"/>
-<text class="t-mono t-b" x="781" y="304">talentsuite-atlas</text>
+<text class="t-mono t-b" x="781" y="304">atlas-dfe</text>
 <text class="t-m" x="781" y="324">manifest.json</text>
 <text class="t-m" x="781" y="342">generated specs</text>
 <path class="ln-write" d="M852 190 V278" marker-end="url(#p2-write)"/>
