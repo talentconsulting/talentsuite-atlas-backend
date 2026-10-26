@@ -75,7 +75,7 @@ def parse_workflow_request(input_text: str) -> dict[str, Any]:
         "pullRequestTitle",
         "pullRequestBody",
         "deferPublication",
-        # The tenant's owner/repo data repository; discovery mints its GitHub read token for that tenant.
+        # The tenant's owner/repo data repository; discovery and the generator mint their GitHub read tokens for it.
         "tenant",
     }
     if not set(payload).issubset(allowed):
@@ -246,7 +246,9 @@ def _generate_batch(
     invoker: Callable[..., Any],
     max_attempts: int = 3,
     retry_delay_seconds: float = 5.0,
+    tenant: str | None = None,
 ) -> dict[str, Any]:
+    payload = {"sourceUrl": source_url, "sourceFiles": batch, **({"tenant": tenant} if tenant else {})}
     last_error: Exception | None = None
     for attempt in range(max(1, max_attempts)):
         if attempt:
@@ -254,7 +256,7 @@ def _generate_batch(
             time.sleep(retry_delay_seconds * 2 ** (attempt - 1))
         try:
             return validate_schema(
-                invoker(project, generator_name, model, {"sourceUrl": source_url, "sourceFiles": batch}, max_attempts=1)
+                invoker(project, generator_name, model, payload, max_attempts=1)
             )
         except Exception as error:
             last_error = error
@@ -328,6 +330,7 @@ def run_workflow(
                     batch,
                     invoker,
                     retry_delay_seconds=retry_delay_seconds,
+                    tenant=request.get("tenant"),
                 )
                 for batch in batches
             ]

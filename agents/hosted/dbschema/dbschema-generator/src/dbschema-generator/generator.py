@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import functools
 import json
 import math
 import os
@@ -14,6 +15,7 @@ import zipfile
 from dataclasses import dataclass
 from typing import Callable
 
+import github_app
 
 MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 250 * 1024 * 1024
@@ -135,8 +137,12 @@ def parse_input(user_input: str) -> dict[str, str]:
         payload = json.loads(user_input.strip())
     except json.JSONDecodeError as error:
         raise GenerationError("invalid_input", "Input must be valid JSON.") from error
-    if not isinstance(payload, dict) or set(payload) not in ({"sourceUrl"}, {"sourceUrl", "sourceFiles"}):
-        raise GenerationError("invalid_input", 'Input must contain sourceUrl and optional sourceFiles only.')
+    # tenant is optional: the owner/repo data repository the source-file read token is minted for.
+    if not isinstance(payload, dict) or not {"sourceUrl"} <= set(payload) <= {"sourceUrl", "sourceFiles", "tenant"}:
+        raise GenerationError("invalid_input", 'Input must contain sourceUrl and optional sourceFiles and tenant only.')
+    tenant = payload.get("tenant")
+    if tenant is not None and (not isinstance(tenant, str) or not tenant.strip()):
+        raise GenerationError("invalid_input", "tenant must be an owner/repo string.")
     location = parse_source_url(payload["sourceUrl"])
     result = {
         "sourceUrl": str(payload["sourceUrl"]).strip(),
@@ -150,6 +156,8 @@ def parse_input(user_input: str) -> dict[str, str]:
         if len(validated) != len(set(validated)):
             raise GenerationError("invalid_input", "sourceFiles must not contain duplicates.")
         result["sourceFiles"] = validated
+    if tenant is not None:
+        result["tenant"] = tenant.strip()
     return result
 
 
@@ -188,14 +196,18 @@ def _is_database_source(path: str, content: str) -> bool:
     return bool(parts & DATABASE_PATH_PARTS) or bool(DATABASE_MARKER_RE.search(content))
 
 
-def _download_sources(location: SourceLocation) -> dict[str, str]:
+def _download_sources(location: SourceLocation, tenant: str | None = None) -> dict[str, str]:
     owner = urllib.parse.quote(location.owner, safe="")
     repository = urllib.parse.quote(location.repository, safe="")
     ref = urllib.parse.quote(location.ref, safe="")
-    request = urllib.request.Request(
-        f"https://codeload.github.com/{owner}/{repository}/zip/{ref}",
-        headers={"User-Agent": "dbschema-generator"},
-    )
+    url = f"https://codeload.github.com/{owner}/{repository}/zip/{ref}"
+    headers = {"User-Agent": "dbschema-generator"}
+    token = github_app.read_token(tenant)
+    if token:
+        # The API's zipball endpoint accepts App installation tokens and redirects to a signed codeload URL.
+        url = f"https://api.github.com/repos/{owner}/{repository}/zipball/{ref}"
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=120) as response:
             declared_size = int(response.headers.get("Content-Length", "0") or "0")
@@ -254,9 +266,12 @@ def _download_sources(location: SourceLocation) -> dict[str, str]:
     return dict(sorted(sources.items()))
 
 
-def _download_selected_sources(location: SourceLocation, source_files: list[str]) -> dict[str, str]:
+def _download_selected_sources(
+    location: SourceLocation, source_files: list[str], tenant: str | None = None
+) -> dict[str, str]:
     sources: dict[str, str] = {}
     total_bytes = 0
+    token = github_app.read_token(tenant)
     prefix = f"https://github.com/{location.owner}/{location.repository}/blob/{location.ref}/"
     for blob_url in source_files:
         path = urllib.parse.unquote(urllib.parse.urlparse(blob_url).path).split(f"/{location.owner}/{location.repository}/blob/{location.ref}/", 1)[-1]
@@ -265,7 +280,17 @@ def _download_selected_sources(location: SourceLocation, source_files: list[str]
             f"{urllib.parse.quote(location.repository, safe='')}/{urllib.parse.quote(location.ref, safe='')}/"
             f"{urllib.parse.quote(path, safe='/')}"
         )
-        request = urllib.request.Request(raw_url, headers={"User-Agent": "dbschema-generator"})
+        headers = {"User-Agent": "dbschema-generator"}
+        if token:
+            # The contents API accepts App installation tokens; raw.githubusercontent.com is for anonymous reads.
+            raw_url = (
+                f"https://api.github.com/repos/{urllib.parse.quote(location.owner, safe='')}/"
+                f"{urllib.parse.quote(location.repository, safe='')}/contents/{urllib.parse.quote(path, safe='/')}"
+                f"?ref={urllib.parse.quote(location.ref, safe='')}"
+            )
+            headers["Authorization"] = f"Bearer {token}"
+            headers["Accept"] = "application/vnd.github.raw"
+        request = urllib.request.Request(raw_url, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 content = response.read(MAX_FILE_BYTES + 1)
@@ -450,12 +475,13 @@ def validate_database_schema(document: object) -> dict[str, object]:
 def generate_from_text(
     user_input: str,
     completion: Callable[[str], str] = _foundry_completion,
-    source_loader: Callable[[SourceLocation], dict[str, str]] = _download_sources,
+    source_loader: Callable[[SourceLocation], dict[str, str]] | None = None,
 ) -> dict[str, object]:
     payload = parse_input(user_input)
     location = parse_source_url(payload["sourceUrl"])
+    source_loader = source_loader or functools.partial(_download_sources, tenant=payload.get("tenant"))
     sources = (
-        _download_selected_sources(location, payload["sourceFiles"])
+        _download_selected_sources(location, payload["sourceFiles"], payload.get("tenant"))
         if "sourceFiles" in payload
         else source_loader(location)
     )

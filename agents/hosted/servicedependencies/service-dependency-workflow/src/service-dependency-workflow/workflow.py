@@ -64,7 +64,7 @@ def parse_workflow_request(input_text: str) -> dict[str, Any]:
     allowed = {
         "sourceUrl", "targetRepository", "targetDirectory", "targetBaseBranch", "branchName",
         "pullRequestTitle", "pullRequestBody", "deferPublication",
-        # The tenant's owner/repo data repository; discovery mints its GitHub read token for that tenant.
+        # The tenant's owner/repo data repository; discovery and the generator mint their GitHub read tokens for it.
         "tenant",
     }
     if not set(payload).issubset(allowed):
@@ -364,11 +364,15 @@ def catalog_to_puml(catalog: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _generate_batch(project: Any, generator_name: str, model: str, source_url: str, batch: list[str], invoker: Callable[..., Any]) -> dict[str, Any]:
+def _generate_batch(
+    project: Any, generator_name: str, model: str, source_url: str, batch: list[str], invoker: Callable[..., Any],
+    tenant: str | None = None,
+) -> dict[str, Any]:
+    payload = {"sourceUrl": source_url, "sourceFiles": batch, **({"tenant": tenant} if tenant else {})}
     last_error: Exception | None = None
     for _ in range(2):
         try:
-            return validate_catalog(invoker(project, generator_name, model, {"sourceUrl": source_url, "sourceFiles": batch}, max_attempts=1))
+            return validate_catalog(invoker(project, generator_name, model, payload, max_attempts=1))
         except Exception as error:
             last_error = error
     assert last_error is not None
@@ -424,7 +428,7 @@ def run_workflow(
             # of one at a time, since the deployment's throughput quota is far above what one repo needs.
             with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(max_concurrency, len(batches)))) as executor:
                 future_to_batch = {
-                    executor.submit(_generate_batch, project, generator_name, model, source_url, batch, invoker): batch
+                    executor.submit(_generate_batch, project, generator_name, model, source_url, batch, invoker, request.get("tenant")): batch
                     for batch in batches
                 }
                 for future in concurrent.futures.as_completed(future_to_batch):

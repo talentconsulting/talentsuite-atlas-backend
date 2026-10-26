@@ -84,7 +84,7 @@ def parse_input(user_input: str) -> dict[str, Any]:
         raise GenerationError("invalid_input", "Input must be one JSON object.") from error
     if not isinstance(payload, dict) or not {"sourceUrl", "sourceFiles"} <= set(payload) <= {"sourceUrl", "sourceFiles", "tenant"}:
         raise GenerationError("invalid_input", "Input must contain exactly sourceUrl and sourceFiles, and an optional tenant.")
-    # The tenant's owner/repo data repository; the commit lookup mints its GitHub read token for that tenant.
+    # The tenant's owner/repo data repository; the source download and commit lookup mint their GitHub read token for that tenant.
     tenant = payload.get("tenant")
     if tenant is not None and not isinstance(tenant, str):
         raise GenerationError("invalid_input", "tenant must be an owner/repo string.")
@@ -103,17 +103,21 @@ def parse_input(user_input: str) -> dict[str, Any]:
     return {"location": location, "paths": paths, "tenant": tenant}
 
 
-def _download_selected_sources(location: SourceLocation, paths: list[str]) -> dict[str, str]:
+def _download_selected_sources(location: SourceLocation, paths: list[str], tenant: str | None = None) -> dict[str, str]:
     sources: dict[str, str] = {}
     total_bytes = 0
+    owner, repository, ref = (urllib.parse.quote(value, safe="") for value in (location.owner, location.repository, location.ref))
+    token = github_app.read_token(tenant)
     for path in paths:
-        url = (
-            f"https://raw.githubusercontent.com/{urllib.parse.quote(location.owner, safe='')}/"
-            f"{urllib.parse.quote(location.repository, safe='')}/{urllib.parse.quote(location.ref, safe='')}/"
-            f"{urllib.parse.quote(path, safe='/')}"
-        )
+        url = f"https://raw.githubusercontent.com/{owner}/{repository}/{ref}/{urllib.parse.quote(path, safe='/')}"
+        headers = {"User-Agent": "repo-metadata-generator"}
+        if token:
+            # The contents API accepts App installation tokens; raw.githubusercontent.com is for anonymous reads.
+            url = f"https://api.github.com/repos/{owner}/{repository}/contents/{urllib.parse.quote(path, safe='/')}?ref={ref}"
+            headers["Authorization"] = f"Bearer {token}"
+            headers["Accept"] = "application/vnd.github.raw"
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": "repo-metadata-generator"})
+            request = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(request, timeout=30) as response:
                 body = response.read(MAX_FILE_BYTES + 1)
         except urllib.error.HTTPError as error:
@@ -393,11 +397,12 @@ def validate_catalog(
 
 def generate_from_text(
     user_input: str,
-    source_loader: Callable[[SourceLocation, list[str]], dict[str, str]] = _download_selected_sources,
+    source_loader: Callable[[SourceLocation, list[str]], dict[str, str]] | None = None,
     commit_date_loader: Callable[[SourceLocation], str] | None = None,
 ) -> dict[str, Any]:
     parsed = parse_input(user_input)
     location: SourceLocation = parsed["location"]
+    source_loader = source_loader or functools.partial(_download_selected_sources, tenant=parsed["tenant"])
     commit_date_loader = commit_date_loader or functools.partial(_fetch_last_commit_date, tenant=parsed["tenant"])
     sources = source_loader(location, parsed["paths"])
     last_commit_date = commit_date_loader(location)

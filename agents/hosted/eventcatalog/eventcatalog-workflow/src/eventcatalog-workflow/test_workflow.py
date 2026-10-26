@@ -334,21 +334,43 @@ class SenderMergeTests(unittest.TestCase):
 
 
 class TenantTests(unittest.TestCase):
-    def test_tenant_is_passed_to_discovery_only(self):
+    def run_with(self, request, overflow_batches=False):
+        overflow = RuntimeError("Error code: 400 - {'error': {'code': 'context_length_exceeded'}}")
         calls = []
 
         def invoke(project, name, model, payload, max_attempts=2):
             calls.append((name, payload))
             if name == "discovery":
-                return {"sourceFiles": FILES[:1], "excludedFiles": []}
+                return {"sourceFiles": FILES, "excludedFiles": []}
+            if overflow_batches and len(payload["sourceFiles"]) > 1:
+                raise overflow
             return catalog()
 
         run_workflow(
-            object(), {"sourceUrl": SOURCE, "deferPublication": True, "tenant": "tenant/atlas"},
-            "discovery", "generator", "publisher", "gpt-4o", invoker=invoke,
+            object(), {"sourceUrl": SOURCE, "deferPublication": True, **request},
+            "discovery", "generator", "publisher", "gpt-4o",
+            generator_batch_size=2, invoker=invoke, retry_delay_seconds=0,
         )
-        self.assertEqual({"sourceUrl": SOURCE, "tenant": "tenant/atlas"}, calls[0][1])
-        self.assertNotIn("tenant", calls[1][1])
+        return calls
+
+    def test_tenant_is_passed_to_discovery_and_every_generator_batch(self):
+        calls = self.run_with({"tenant": "tenant/atlas"})
+        self.assertEqual(("discovery", {"sourceUrl": SOURCE, "tenant": "tenant/atlas"}), calls[0])
+        generator_payloads = sorted((payload for name, payload in calls if name == "generator"), key=lambda p: p["sourceFiles"])
+        self.assertEqual([
+            {"sourceUrl": SOURCE, "sourceFiles": FILES[:2], "tenant": "tenant/atlas"},
+            {"sourceUrl": SOURCE, "sourceFiles": FILES[2:], "tenant": "tenant/atlas"},
+        ], generator_payloads)
+
+    def test_tenant_is_kept_when_an_overflowing_batch_is_split(self):
+        calls = self.run_with({"tenant": "tenant/atlas"}, overflow_batches=True)
+        generator_payloads = [payload for name, payload in calls if name == "generator"]
+        self.assertEqual(4, len(generator_payloads))              # two batches, the first split into two halves
+        self.assertTrue(all(payload["tenant"] == "tenant/atlas" for payload in generator_payloads))
+
+    def test_without_a_tenant_no_payload_carries_one(self):
+        calls = self.run_with({})
+        self.assertTrue(all("tenant" not in payload for _, payload in calls))
 
 
 if __name__ == "__main__":

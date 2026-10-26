@@ -113,7 +113,7 @@ Previous workflows, scripts, prompt agents, and documentation are retained under
 
 One set of agents serves every tenant. A tenant is identified by its **data repository**: the repo that holds its `manifest.json` and the generated catalogues. The manifest URL a run is started with names it. For each run the agents mint one-hour tokens from the TalentSuite Atlas GitHub App installation that covers the data repo: a read-only token for source code and the manifest, and a write token limited to the data repo for pull requests. Tokens stay inside the agents and are never passed in requests. Setting up the App is described in [DEPLOYMENT.md](DEPLOYMENT.md#tenants-and-the-atlas-github-app).
 
-In the diagrams, green links use the read-only token, pink links use the write token, pink boxes are what the App installation covers, dashed outlines are GitHub organisations, and the dashed orange link doesn't work yet.
+In the diagrams, green links use the read-only token, pink links use the write token, pink boxes are what the App installation covers, dashed outlines are GitHub organisations, and the dashed orange link is a read that fails.
 
 ### A company with public source repos
 
@@ -125,9 +125,7 @@ In this example, Northwind's source code is public and its data repo, `northwind
 
 The company installs the App on its own organisation and keeps its data repo there, so one installation covers both the private sources and the data repo. A run for one tenant can't reach another tenant's private repos.
 
-![Acme: Acme's App installation covers its private repos and its acme-atlas data repo; discovery reads the private repos, the generators can't yet, and pull requests go to acme-atlas.](docs/diagrams/tenancy-private-repos.svg)
-
-The generators (every flow except user-journeys) still fetch individual files without a token, so they fail on private repos until they're changed to use the tenant's read token.
+![Acme: Acme's App installation covers its private repos and its acme-atlas data repo; discovery and the generators read the private repos with Acme's token, and pull requests go to acme-atlas.](docs/diagrams/tenancy-private-repos.svg)
 
 ### Keep the data repo beside private sources
 
@@ -145,11 +143,10 @@ Tokens always come from the installation that covers the data repo. If a company
 
 To onboard a company with private repos:
 
-1. Change the generators to fetch files with the tenant's read token.
-2. Set the App's "Where can this GitHub App be installed?" to "Any account".
-3. The company creates a data repo in its organisation with a `manifest.json`, then installs the App on the data repo and every private repo in the manifest.
-4. Run [Run All Flows](#run-every-flow-against-one-repository) with the company's manifest URL. Pull requests arrive in its data repo.
-5. Deploy a Render viewer that reads the company's data repo.
+1. Set the App's "Where can this GitHub App be installed?" to "Any account".
+2. The company creates a data repo in its organisation with a `manifest.json`, then installs the App on the data repo and every private repo in the manifest.
+3. Run [Run All Flows](#run-every-flow-against-one-repository) with the company's manifest URL. Pull requests arrive in its data repo.
+4. Deploy a Render viewer that reads the company's data repo.
 
 ## Database schema orchestration
 

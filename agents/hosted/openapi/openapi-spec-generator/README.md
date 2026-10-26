@@ -18,6 +18,8 @@ The input must be a JSON object with exactly these properties:
 
 Every URL must be a credential-free HTTPS GitHub blob URL from the same repository and ref. The agent reads only the supplied files; it does not scan the repository for additional context.
 
+An optional `tenant` (the tenant's `owner/repo` data repository) may also be supplied. When the GitHub App is configured (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`), the files are read through the GitHub contents API with that tenant's read-only installation token, so private repositories work; otherwise they are read anonymously from raw.githubusercontent.com (or with `GITHUB_READ_TOKEN`, if set).
+
 ## Output
 
 The response is the OpenAPI document itself, not a wrapper and not Markdown:

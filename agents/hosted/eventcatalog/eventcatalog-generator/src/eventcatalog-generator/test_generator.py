@@ -1,6 +1,8 @@
 import json
 import unittest
+from unittest import mock
 
+import generator
 from generator import GenerationError, SourceLocation, generate_from_text, parse_input, source_prompt, validate_catalog
 
 
@@ -58,7 +60,7 @@ class GeneratorTests(unittest.TestCase):
     def test_generate_downloads_only_selected_files_and_validates_output(self):
         loaded = []
 
-        def load(location, files):
+        def load(location, files, tenant=None):
             loaded.extend(files)
             return {"src/Application/Commands/CreateOrderCommand.cs": "record CreateOrderCommand(Guid orderId);"}
 
@@ -141,6 +143,67 @@ class Approvals { async Task Approve() {
         result = add_senders(document, self.SOURCES)
         self.assertEqual(1, len(result["events"]))
         self.assertEqual(["src/Commitments/Services/Approvals.cs"], [s["sourceFile"] for s in result["events"][0]["senders"]])
+
+
+class TenantTests(unittest.TestCase):
+    def test_passes_the_tenant_to_the_source_loader(self):
+        seen = []
+
+        def load(location, files, tenant=None):
+            seen.append(tenant)
+            return {"src/Application/Commands/CreateOrderCommand.cs": "record CreateOrderCommand(Guid orderId);"}
+
+        generate_from_text(
+            json.dumps({"sourceUrl": SOURCE, "sourceFiles": FILES, "tenant": "tenant/atlas"}),
+            completion=lambda prompt: json.dumps(CATALOG),
+            source_loader=load,
+        )
+        self.assertEqual(["tenant/atlas"], seen)
+
+    def test_tenant_is_optional(self):
+        self.assertIsNone(parse_input(json.dumps({"sourceUrl": SOURCE, "sourceFiles": FILES}))["tenant"])
+
+    def test_rejects_a_tenant_that_is_not_a_non_empty_string(self):
+        for tenant in (1, "", "  "):
+            with self.subTest(tenant=tenant), self.assertRaisesRegex(GenerationError, "tenant"):
+                parse_input(json.dumps({"sourceUrl": SOURCE, "sourceFiles": FILES, "tenant": tenant}))
+
+
+class SourceDownloadTests(unittest.TestCase):
+    def download(self, token):
+        requests = []
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self, size): return b"record CreateOrderCommand();"
+
+        def urlopen(request, timeout):
+            requests.append(request)
+            return Response()
+
+        with mock.patch.object(generator.github_app, "read_token", return_value=token) as read_token, \
+                mock.patch.object(generator.urllib.request, "urlopen", side_effect=urlopen):
+            generator._download_selected_sources(generator.parse_source_url(SOURCE), FILES, "tenant/atlas")
+        read_token.assert_called_once_with("tenant/atlas")
+        return requests[0]
+
+    def test_the_tenants_token_reads_through_the_contents_api(self):
+        request = self.download("installation-token")
+        self.assertEqual(
+            "https://api.github.com/repos/source/app/contents/src/Application/Commands/CreateOrderCommand.cs?ref=main",
+            request.full_url,
+        )
+        self.assertEqual("Bearer installation-token", request.get_header("Authorization"))
+        self.assertEqual("application/vnd.github.raw", request.get_header("Accept"))
+
+    def test_without_a_token_the_raw_file_is_read(self):
+        request = self.download(None)
+        self.assertEqual(
+            "https://raw.githubusercontent.com/source/app/main/src/Application/Commands/CreateOrderCommand.cs",
+            request.full_url,
+        )
+        self.assertIsNone(request.get_header("Authorization"))
 
 
 if __name__ == "__main__":

@@ -341,10 +341,50 @@ class TenantTokenTests(unittest.TestCase):
         self.assertEqual("https://api.github.com/repos/owner/repo/commits/main", requests[0].full_url)
         self.assertEqual("Bearer installation-token", requests[0].get_header("Authorization"))
 
+    def test_source_files_are_downloaded_with_the_tenants_token(self):
+        blob = "https://github.com/owner/repo/blob/main/src/App/App.csproj"
+        with mock.patch.object(generator, "_download_selected_sources", return_value={"src/App/App.csproj": "<Project />"}) as download:
+            generate_from_text(
+                json.dumps({"sourceUrl": SOURCE_URL, "sourceFiles": [blob], "tenant": "tenant/atlas"}),
+                commit_date_loader=_commit_date_loader,
+            )
+        download.assert_called_once_with(LOCATION, ["src/App/App.csproj"], tenant="tenant/atlas")
+
     def test_tenant_must_be_a_string(self):
         blob = "https://github.com/owner/repo/blob/main/src/App/App.csproj"
         with self.assertRaises(GenerationError):
             parse_input(json.dumps({"sourceUrl": SOURCE_URL, "sourceFiles": [blob], "tenant": 1}))
+
+
+class SourceDownloadTests(unittest.TestCase):
+    def download(self, token):
+        requests = []
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self, size): return b"<Project />"
+
+        def urlopen(request, timeout):
+            requests.append(request)
+            return Response()
+
+        with mock.patch.object(generator.github_app, "read_token", return_value=token) as read_token, \
+                mock.patch.object(generator.urllib.request, "urlopen", side_effect=urlopen):
+            generator._download_selected_sources(LOCATION, ["src/App/App.csproj"], "tenant/atlas")
+        read_token.assert_called_once_with("tenant/atlas")
+        return requests[0]
+
+    def test_the_tenants_token_reads_through_the_contents_api(self):
+        request = self.download("installation-token")
+        self.assertEqual("https://api.github.com/repos/owner/repo/contents/src/App/App.csproj?ref=main", request.full_url)
+        self.assertEqual("Bearer installation-token", request.get_header("Authorization"))
+        self.assertEqual("application/vnd.github.raw", request.get_header("Accept"))
+
+    def test_without_a_token_the_raw_file_is_read(self):
+        request = self.download(None)
+        self.assertEqual("https://raw.githubusercontent.com/owner/repo/main/src/App/App.csproj", request.full_url)
+        self.assertIsNone(request.get_header("Authorization"))
 
 
 if __name__ == "__main__":
