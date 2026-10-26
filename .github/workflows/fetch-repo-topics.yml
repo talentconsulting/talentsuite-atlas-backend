@@ -13,10 +13,16 @@ permissions:
 jobs:
   fetch-and-publish:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # One run per tenant data repository. ATLAS_DATA_REPOSITORIES is a JSON array of owner/repo names.
+        repository: ${{ fromJSON(vars.ATLAS_DATA_REPOSITORIES || '["talentconsulting/talentsuite-atlas"]') }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Fetch topics for every manifest repository
         env:
           GITHUB_PR_TOKEN: ${{ secrets.SERVICE_CATALOGUE_PR_TOKEN }}
+          MANIFEST_SOURCE_URL: https://github.com/${{ matrix.repository }}/blob/main/manifest.json
         run: python3 scripts/fetch_repo_topics.py

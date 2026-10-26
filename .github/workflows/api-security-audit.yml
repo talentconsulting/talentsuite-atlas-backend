@@ -8,9 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       catalogue_repository:
-        description: "Catalogue repository holding manifest.json and the generated specs"
+        description: "Tenant data repository holding manifest.json and the generated specs. Leave blank for every one in ATLAS_DATA_REPOSITORIES."
         required: false
-        default: talentconsulting/talentsuite-atlas
         type: string
 
 permissions:
@@ -19,8 +18,13 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # One run per tenant data repository, or just the one chosen on a manual run.
+        repository: ${{ fromJSON(inputs.catalogue_repository && format('["{0}"]', inputs.catalogue_repository) || vars.ATLAS_DATA_REPOSITORIES || '["talentconsulting/talentsuite-atlas"]') }}
     env:
-      CATALOGUE_REPOSITORY: ${{ inputs.catalogue_repository || 'talentconsulting/talentsuite-atlas' }}
+      CATALOGUE_REPOSITORY: ${{ matrix.repository }}
     steps:
       - uses: actions/checkout@v4
 

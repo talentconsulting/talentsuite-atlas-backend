@@ -9,10 +9,11 @@ Required environment variables:
                              (or classic PAT with the security_events scope)
                              to every repository listed in the manifest.
     GITHUB_PR_TOKEN          Token with contents + pull-requests write access
-                             to the manifest repository (talentsuite-atlas).
+                             to the tenant's data repository holding the manifest.
 
 Optional environment variables:
-    MANIFEST_SOURCE_URL      Defaults to the shared talentsuite-atlas manifest.
+    MANIFEST_SOURCE_URL      The tenant's manifest. Defaults to talentsuite-atlas (DfE);
+                             the workflow sets it for each repository in ATLAS_DATA_REPOSITORIES.
 """
 
 from __future__ import annotations

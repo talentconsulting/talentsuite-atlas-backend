@@ -11,13 +11,14 @@ writes identical files and opens no pull request.
 
 Required environment variables:
     GITHUB_PR_TOKEN     Token with contents + pull-requests write access to the
-                        manifest repository (talentsuite-atlas). Also used
-                        to read topics unless REPO_TOPICS_TOKEN is set.
+                        tenant's data repository holding the manifest. Also
+                        used to read topics unless REPO_TOPICS_TOKEN is set.
 
 Optional environment variables:
     REPO_TOPICS_TOKEN   Token with metadata read access to the manifest
                         repositories, for when they are not all public.
-    MANIFEST_SOURCE_URL Defaults to the shared talentsuite-atlas manifest.
+    MANIFEST_SOURCE_URL The tenant's manifest. Defaults to talentsuite-atlas (DfE); the
+                        workflow sets it for each repository in ATLAS_DATA_REPOSITORIES.
 """
 
 from __future__ import annotations

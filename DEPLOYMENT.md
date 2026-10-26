@@ -133,6 +133,21 @@ The connection must exist before the agents are deployed, because their definiti
 
 The agents used to fall back to personal access tokens in the `openapi-pr-github` and `github-source-read` connections. Their definitions no longer reference them, so once every agent in an environment has been redeployed those connections can be deleted.
 
+### Adding a tenant
+
+A tenant is one customer, with its own data repository. Nothing is deployed per tenant: the same agents serve every data repository, and the manifest URL a run starts with picks the tenant. To add one:
+
+1. **Create the data repository** with a `manifest.json` in the same format as `talentconsulting/talentsuite-atlas`, on its `main` branch. Put it in `talentconsulting` if the customer's source repositories are public, or in the customer's organisation if any are private (see [Tenants and GitHub access](README.md#tenants-and-github-access)). Agents create the generated folders through pull requests; to give the customer the catalogue viewer, copy `visualizer/` from `talentsuite-atlas`.
+2. **Install the Atlas GitHub App** on the data repository, and on every private source repository in its manifest. The agents get each tenant's tokens from the installation covering its data repository, so nothing else is configured for the agents.
+3. **Add it to the weekly jobs.** Set the repository variable `ATLAS_DATA_REPOSITORIES` (Settings → Secrets and variables → Actions → Variables) to a JSON array of every tenant's data repository, for example `["talentconsulting/talentsuite-atlas", "talentconsulting/northwind-atlas"]`. **Fetch Repository Topics**, **Check Dependabot Alerts** and **API Security Audit** run once for each. Without the variable they cover only `talentconsulting/talentsuite-atlas`. These jobs use personal access tokens, not the App, so also:
+   - grant `SERVICE_CATALOGUE_PR_TOKEN` contents and pull-request write access to the new data repository
+   - grant `DEPENDABOT_ALERTS_TOKEN` "Dependabot alerts: read" on the tenant's source repositories, or that job reports an error for each one it can't read
+4. **Run the flows** with the tenant's manifest URL: **Run Manifest Orchestrator** for each flow, or **Run All Flows Against A Repository** for one repository. Pull requests arrive in the tenant's data repository.
+
+**Billing.** Model usage is recorded against the data repository, so the tenant appears as its own line in **Usage Billing Report** from its first run. There's nothing to set up.
+
+To remove a tenant, take its data repository out of `ATLAS_DATA_REPOSITORIES`, stop running flows for its manifest, and uninstall the App from it. Its usage stays in the ledger for invoicing.
+
 Optional `dev` environment variables are:
 
 | Variable | Default |
