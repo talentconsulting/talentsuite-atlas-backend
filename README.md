@@ -50,7 +50,7 @@ Previous workflows, scripts, prompt agents, and documentation are retained under
 
 ## Tenants and GitHub access
 
-One set of agents serves every tenant. A tenant is identified by its **data repository**: the repo that holds its `manifest.json` and the generated catalogues. The manifest URL a run is started with names it. For each run the agents mint one-hour tokens from the TalentSuite Atlas GitHub App installation that covers the data repo: a read-only token for source code and the manifest, and a write token limited to the data repo for pull requests. Tokens stay inside the agents and are never passed in requests. Setting up the App is described in [DEPLOYMENT.md](DEPLOYMENT.md#tenants-and-the-atlas-github-app).
+One set of agents serves every tenant. A tenant is one customer, identified by its **data repository**: the repo that holds its `manifest.json` and the generated catalogues. Each customer has its own data repo, so their catalogues, pull requests, GitHub access and invoices stay separate. DfE's is `talentconsulting/talentsuite-atlas`. The manifest URL a run is started with names it. For each run the agents mint one-hour tokens from the TalentSuite Atlas GitHub App installation that covers the data repo: a read-only token for source code and the manifest, and a write token limited to the data repo for pull requests. Tokens stay inside the agents and are never passed in requests. Setting up the App is described in [DEPLOYMENT.md](DEPLOYMENT.md#tenants-and-the-atlas-github-app).
 
 In the diagrams, green links use the read-only token, pink links use the write token, pink boxes are what the App installation covers, dashed outlines are GitHub organisations, and the dashed orange link is a read that fails.
 
@@ -80,12 +80,16 @@ Tokens always come from the installation that covers the data repo. If a company
 | App setting "Where can this GitHub App be installed?" | "Only on this account" is enough | "Any account" |
 | Viewer | A Render service reading `northwind-atlas` | A Render service reading `acme-atlas` |
 
-To onboard a company with private repos:
+To onboard a company:
 
-1. Set the App's "Where can this GitHub App be installed?" to "Any account".
-2. The company creates a data repo in its organisation with a `manifest.json`, then installs the App on the data repo and every private repo in the manifest.
-3. Run [Run All Flows](#run-every-flow-against-one-repository) with the company's manifest URL. Pull requests arrive in its data repo.
+1. Create its data repo with a `manifest.json` listing its repositories:
+   - Public source repos: create it in `talentconsulting` (for example `northwind-atlas`) and add it to the App's installation there.
+   - Private source repos: set the App's "Where can this GitHub App be installed?" to "Any account". The company creates the data repo in its own organisation, then installs the App on the data repo and every private repo in the manifest.
+2. Add the data repo to the `ATLAS_DATA_REPOSITORIES` repository variable, so the weekly topics, Dependabot and API security jobs cover it, and give their tokens access to it. See [Adding a tenant](DEPLOYMENT.md#adding-a-tenant).
+3. Run [Run All Flows](#run-every-flow-against-one-repository) or **Run Manifest Orchestrator** with the company's manifest URL. Pull requests arrive in its data repo.
 4. Deploy a Render viewer that reads the company's data repo.
+
+Its model usage is billed to the data repo, which is its own line in the monthly invoice.
 
 ## Database schema orchestration
 

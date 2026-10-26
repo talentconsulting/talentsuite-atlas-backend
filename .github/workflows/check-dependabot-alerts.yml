@@ -12,6 +12,11 @@ permissions:
 jobs:
   check-and-publish:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # One run per tenant data repository. ATLAS_DATA_REPOSITORIES is a JSON array of owner/repo names.
+        repository: ${{ fromJSON(vars.ATLAS_DATA_REPOSITORIES || '["talentconsulting/talentsuite-atlas"]') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -19,4 +24,5 @@ jobs:
         env:
           DEPENDABOT_ALERTS_TOKEN: ${{ secrets.DEPENDABOT_ALERTS_TOKEN }}
           GITHUB_PR_TOKEN: ${{ secrets.SERVICE_CATALOGUE_PR_TOKEN }}
+          MANIFEST_SOURCE_URL: https://github.com/${{ matrix.repository }}/blob/main/manifest.json
         run: python3 scripts/check_dependabot_alerts.py
