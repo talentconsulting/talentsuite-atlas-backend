@@ -17,8 +17,6 @@ services:
         value: ${EVENTCATALOG_DISCOVERY_MAX_FILES}
       - name: EVENTCATALOG_DISCOVERY_MAX_BYTES
         value: ${EVENTCATALOG_DISCOVERY_MAX_BYTES}
-      - name: GITHUB_READ_TOKEN
-        value: ${{connections.github-source-read.credentials.github_token}}
       - name: GITHUB_APP_ID
         value: ${{connections.atlas-github-app.credentials.app_id}}
       - name: GITHUB_APP_PRIVATE_KEY

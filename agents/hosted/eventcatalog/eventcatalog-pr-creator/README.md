@@ -22,7 +22,7 @@ Commits up to 100 validated catalogs plus an optional manifest update in one Git
 }
 ```
 
-The hosted service reuses the `openapi-pr-github` Foundry custom-keys connection and reads its `github_token` as `GITHUB_PR_TOKEN`.
+The hosted service mints its pull-request token from the Atlas GitHub App through the `atlas-github-app` Foundry custom-keys connection.
 
 ```bash
 python3 -m unittest discover -s src/eventcatalog-pr-creator -p 'test_*.py'

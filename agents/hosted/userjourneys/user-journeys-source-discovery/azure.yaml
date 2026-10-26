@@ -20,8 +20,6 @@ services:
       resources: { cpu: "0.5", memory: 1Gi }
     description: Builds the navigation graph (pages, links and redirects, with source evidence) of the ASP.NET web projects beneath one GitHub repository path.
     environmentVariables:
-      - name: GITHUB_READ_TOKEN
-        value: ${{connections.github-source-read.credentials.github_token}}
       - name: GITHUB_APP_ID
         value: ${{connections.atlas-github-app.credentials.app_id}}
       - name: GITHUB_APP_PRIVATE_KEY

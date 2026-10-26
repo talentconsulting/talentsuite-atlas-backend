@@ -2,11 +2,21 @@ name: Deploy .NET Version Source Discovery
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to use."
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
+          - test
 
 jobs:
   deploy:
     uses: ./.github/workflows/deploy-repo-metadata-agent.reusable.yml
     with:
+      environment: ${{ inputs.environment }}
       project_dir: agents/hosted/repometadata/repo-metadata-source-discovery
       service_name: repo-metadata-source-discovery
       expected_marker: repoMetadataFiles

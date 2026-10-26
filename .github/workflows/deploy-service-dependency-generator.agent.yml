@@ -2,11 +2,21 @@ name: Deploy Service Dependency Generator
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to use."
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
+          - test
 
 jobs:
   deploy:
     uses: ./.github/workflows/deploy-service-dependency-agent.reusable.yml
     with:
+      environment: ${{ inputs.environment }}
       project_dir: agents/hosted/servicedependencies/service-dependency-generator
       service_name: service-dependency-generator
       expected_marker: invalid_input

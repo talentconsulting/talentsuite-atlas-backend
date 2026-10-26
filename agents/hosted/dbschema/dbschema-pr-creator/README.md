@@ -31,7 +31,7 @@ The agent accepts at most 100 schemas and 10 MiB of generated JSON per request. 
 
 ## GitHub connection
 
-The agent reuses the Foundry **Custom keys** connection named `openapi-pr-github`, whose secret field is `github_token`. The hosted agent maps that write-only value to `GITHUB_PR_TOKEN`. The token needs repository contents and pull-request write access to the destination repository.
+The agent opens pull requests with a short-lived token it mints from the Atlas GitHub App, through the Foundry **Custom keys** connection `atlas-github-app` (fields `app_id` and `private_key`, mapped to `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY`). The token is limited to the tenant's data repository, with contents and pull-request write access. See [Tenants and the Atlas GitHub App](../../../../DEPLOYMENT.md#tenants-and-the-atlas-github-app).
 
 ## Test and deploy
 
@@ -40,4 +40,4 @@ python3 -m unittest discover -s src/dbschema-pr-creator -p 'test_*.py'
 AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd deploy dbschema-pr-creator --no-prompt
 ```
 
-The root workflow `.github/workflows/deploy-dbschema-pr-creator.agent.yml` performs the same deployment using the `dev` GitHub environment. The shared `openapi-pr-github` connection must already exist in the target Foundry project.
+The root workflow `.github/workflows/deploy-dbschema-pr-creator.agent.yml` performs the same deployment using the `dev` GitHub environment. The `atlas-github-app` connection must already exist in the target Foundry project.

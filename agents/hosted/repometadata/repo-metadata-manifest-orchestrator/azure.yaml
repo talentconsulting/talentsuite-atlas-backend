@@ -32,8 +32,6 @@ services:
         value: ${REPO_METADATA_MANIFEST_MAX_CATALOGS}
       - name: REPO_METADATA_MANIFEST_WORKFLOW_CONCURRENCY
         value: ${REPO_METADATA_MANIFEST_WORKFLOW_CONCURRENCY}
-      - name: GITHUB_READ_TOKEN
-        value: ${{connections.openapi-pr-github.credentials.github_token}}
       - name: GITHUB_APP_ID
         value: ${{connections.atlas-github-app.credentials.app_id}}
       - name: GITHUB_APP_PRIVATE_KEY

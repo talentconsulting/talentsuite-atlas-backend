@@ -6,7 +6,7 @@ param projectName = 'talent-day-proj-default'
 param logAnalyticsName = 'DefaultWorkspace-4eb4fc59-6e00-4fc2-86b3-e586e3987f67'
 param appInsightsName = 'talent-day-proj-default-appinsights-7400'
 param appInsightsConnectionName = 'talent-day-proj-default-appinsights-7400-1709'
-param projectDescription = 'Default project created with the resource'
+param projectDescription = 'TalentSuite atlas development environment'
 param tags = {
   Owner: 'rgparkins'
 }

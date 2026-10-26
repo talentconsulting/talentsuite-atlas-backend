@@ -56,13 +56,7 @@ The agent always returns JSON. A successful change includes the created pull req
 
 ## Authentication
 
-Create a Foundry project **Custom keys** connection named `openapi-pr-github` with a secret field named `github_token`. The hosted agent resolves that write-only connection field into `GITHUB_PR_TOKEN` when its sandbox starts; the token is not stored in the agent definition.
-
-For a fine-grained GitHub token, grant the destination repository:
-
-- Contents: read and write
-- Pull requests: read and write
-- Metadata: read
+The agent opens pull requests with a short-lived token it mints from the Atlas GitHub App, through the Foundry **Custom keys** connection `atlas-github-app` (fields `app_id` and `private_key`, mapped to `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY`). The token is limited to the tenant's data repository, with contents and pull-request write access. See [Tenants and the Atlas GitHub App](../../../../DEPLOYMENT.md#tenants-and-the-atlas-github-app).
 
 The token is not accepted in the request body and is never returned. Ordinary azd environment substitution must not be used for the deployed token.
 
@@ -73,4 +67,4 @@ python3 -m unittest discover -s src/openapi-spec-pr-creator -p 'test_*.py'
 AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd deploy openapi-spec-pr-creator --no-prompt
 ```
 
-The root workflow `.github/workflows/deploy-openapi-spec-pr-creator.agent.yml` performs the same deployment using the `dev` GitHub environment. The `openapi-pr-github` connection must already exist in the target Foundry project.
+The root workflow `.github/workflows/deploy-openapi-spec-pr-creator.agent.yml` performs the same deployment using the `dev` GitHub environment. The `atlas-github-app` connection must already exist in the target Foundry project.

@@ -2,19 +2,28 @@ name: Deploy Database Schema Manifest Orchestrator
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to use."
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
+          - test
 
 permissions:
   id-token: write
   contents: read
 
 concurrency:
-  group: dbschema-manifest-orchestrator-${{ github.ref }}
+  group: dbschema-manifest-orchestrator-${{ github.ref }}-${{ inputs.environment }}
   cancel-in-progress: false
 
 jobs:
   deploy-and-test:
     runs-on: ubuntu-latest
-    environment: dev
+    environment: ${{ inputs.environment }}
     env:
       AGENT_PROJECT_DIR: agents/hosted/dbschema/dbschema-manifest-orchestrator
       AZD_ENV_NAME: ci

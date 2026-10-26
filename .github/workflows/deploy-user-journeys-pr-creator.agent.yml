@@ -2,11 +2,21 @@ name: Deploy User Journeys PR Creator
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to use."
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
+          - test
 
 jobs:
   deploy:
     uses: ./.github/workflows/deploy-user-journeys-agent.reusable.yml
     with:
+      environment: ${{ inputs.environment }}
       project_dir: agents/hosted/userjourneys/user-journeys-pr-creator
       service_name: user-journeys-pr-creator
       expected_marker: invalid_repository

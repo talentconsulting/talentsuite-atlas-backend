@@ -2,11 +2,21 @@ name: Deploy Local Dev Config Workflow
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to use."
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
+          - test
 
 jobs:
   deploy:
     uses: ./.github/workflows/deploy-local-dev-config-agent.reusable.yml
     with:
+      environment: ${{ inputs.environment }}
       project_dir: agents/hosted/localdevconfig/local-dev-config-workflow
       service_name: local-dev-config-workflow
       expected_marker: invalid_source_url
