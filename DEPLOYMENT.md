@@ -16,6 +16,8 @@ The agents run in an Azure AI Foundry project, which [Foundry infrastructure](#f
 - the `gpt-4o` and `gpt-4.1` model deployments the agents call
 - a Log Analytics workspace and Application Insights, connected to the project
 - the `atlas-github-app` project connection, when the App ID and private key are supplied
+- the usage ledger: a storage account with a `usage` table, and the `atlas-usage-ledger` project connection the agents write to it through (see [Usage and billing](#usage-and-billing))
+- a monthly cost budget with email alerts, when `budgetAmount` and `budgetContactEmails` are set
 - the deploy identity's roles: **Foundry Project Manager** on the account and **Azure AI Developer** on the resource group
 
 It deploys into an existing resource group in incremental mode. Anything it doesn't declare is left alone, including other model deployments on the account and any other project connections.
@@ -81,6 +83,20 @@ In GitHub, create a repository environment with the environment's name, and in i
 ### The dev environment
 
 The resource group, app registration ("Azure AI deployments"), roles, `atlas-github-app` connection and secrets for `talent-day-rg` already exist. The one thing missing for provisioning is **Contributor** on `talent-day-rg` for that app's service principal: its existing roles (Azure AI Developer and Foundry Project Manager) can't read the resource group or run deployments, so the workflow fails at "Check the resource group exists". `dev.bicepparam` turns role assignments off, so it doesn't need Role Based Access Control Administrator.
+
+## Usage and billing
+
+Tenants are charged for the model tokens their runs use, at cost plus a markup. Each environment keeps its own ledger.
+
+**Recording usage.** Every generator agent that calls a model adds one row to the environment's `usage` table per call: the month (the partition), the tenant, the agent, the model deployment and the input, cached input and output token counts. The tenant is the `tenant` in the agent's request, the owner/repo data repository. A request without one is recorded as `unassigned`. The manifest orchestrators and **Run All Flows Against A Repository** pass the tenant. `system-summary-generator` doesn't take a tenant yet, so its usage is `unassigned`.
+
+The agents write through `USAGE_LEDGER_URL`, which each generator's `azure.yaml` maps from the `atlas-usage-ledger` connection. That URL holds a SAS that can only add rows, so an agent can't read, change or delete usage. Provisioning issues a new one, valid for a year, on every run; run **Provision Foundry Infrastructure** at least once a year. A row that can't be written is logged as a warning and the agent carries on, so a ledger problem never fails a run but can under-bill. The shared code is `usage_ledger.py`, kept identical in every generator.
+
+**Invoicing.** **Usage Billing Report** runs on the 2nd of each month for `dev` and `test` and prices the previous month. Run it by hand to choose the environment and month. It reads the ledger with a one-hour read-only SAS and uploads `invoice.csv` (one line per tenant), `detail.csv` (per tenant and model) and `summary.md`, which also appears in the run summary. [`scripts/billing_report.py`](scripts/billing_report.py) does the pricing.
+
+Prices come from [`billing/rates.json`](billing/rates.json): a rate per million input, cached input and output tokens for each model deployment name, a currency and a `markup` (0.25 charges cost plus 25%). The rates start as Azure OpenAI Global Standard list prices in US dollars. Check them against your Azure agreement and billing currency, and set the markup, before invoicing. A model with no rate stops the report rather than pricing it at zero, so add a rate before deploying a new model.
+
+**Azure costs.** Each environment's resource group has a monthly budget (`budgetAmount`, in the subscription's billing currency) that emails `budgetContactEmails` at 80% and 100% of actual spend and when spend is forecast to pass 100%. `budgetStartDate` is the budget's first month; Azure rejects a change to it, so leave it fixed. Compare a month's invoice total with the resource group's cost in Cost Management to see the margin.
 
 ## GitHub Actions configuration
 

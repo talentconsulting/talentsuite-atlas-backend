@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 import github_app
+import usage_ledger
 
 MAX_SUPPORTING_FILES = 50
 MAX_FILE_BYTES = 512 * 1024
@@ -261,6 +262,7 @@ def _foundry_completion(prompt: str) -> str:
         text={"format": {"type": "json_object"}},
         timeout=180,
     )
+    usage_ledger.record(response, "openapi-spec-generator", model)
     return response.output_text
 
 
@@ -324,6 +326,7 @@ def generate_from_text(
     completion: Callable[[str], str] = _foundry_completion,
     fetcher: Callable[[GitHubFile, str | None], str] = _download_source,
 ) -> dict[str, object]:
+    usage_ledger.begin(user_input)
     payload = parse_input(user_input)
     bundle = load_sources(payload, fetcher=fetcher)
     raw_output = completion(source_prompt(bundle))

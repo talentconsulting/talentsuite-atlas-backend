@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 import github_app
+import usage_ledger
 
 
 MAX_SOURCE_FILES = 100
@@ -268,6 +269,7 @@ def _foundry_completion(prompt: str) -> str:
         text={"format": {"type": "json_object"}},
         timeout=180,
     )
+    usage_ledger.record(response, "eventcatalog-generator", model)
     return response.output_text
 
 
@@ -349,6 +351,7 @@ def generate_from_text(
     completion: Callable[[str], str] = _foundry_completion,
     source_loader: Callable[[SourceLocation, list[str], str | None], dict[str, str]] = _download_selected_sources,
 ) -> dict[str, object]:
+    usage_ledger.begin(user_input)
     payload = parse_input(user_input)
     location = parse_source_url(payload["sourceUrl"])
     sources = source_loader(location, payload["sourceFiles"], payload["tenant"])
