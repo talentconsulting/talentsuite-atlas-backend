@@ -116,10 +116,12 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = {
   }
 }
 
-// One at a time: the account rejects concurrent deployment changes.
+// One at a time, and after the project: the account rejects concurrent changes, including a project
+// being created while a model is deployed.
 @batchSize(1)
 resource deployments 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = [for deployment in modelDeployments: {
   parent: account
+  dependsOn: [project]
   name: deployment.name
   sku: {
     name: deployment.sku
