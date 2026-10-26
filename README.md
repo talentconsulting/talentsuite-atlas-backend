@@ -109,6 +109,126 @@ The dependency order is:
 
 Previous workflows, scripts, prompt agents, and documentation are retained under [`backup/`](backup/).
 
+## Tenants and GitHub access
+
+One set of agents serves every tenant. A tenant is identified by its **data repository**: the repo that holds its `manifest.json` and the generated catalogues. The manifest URL a run is started with names it. For each run the agents mint one-hour tokens from the TalentSuite Atlas GitHub App installation that covers the data repo: a read-only token for source code and the manifest, and a write token limited to the data repo for pull requests. Tokens stay inside the agents and are never passed in requests. Setting up the App is described in [DEPLOYMENT.md](DEPLOYMENT.md#tenants-and-the-atlas-github-app).
+
+In the diagrams, green links use the read-only token, the pink link uses the write token, the pink box is what the App installation covers, and the dashed orange link doesn't work yet.
+
+### A company with public source repos
+
+In this example, Northwind's source code is public and its data repo, `northwind-atlas`, lives in `talentconsulting`. The App is installed only on that data repo. The read token can fetch public repos, so Northwind doesn't install anything.
+
+```mermaid
+flowchart LR
+    run["talentsuite-atlas-backend<br/>Run All Flows with Northwind's manifest URL"]
+    subgraph foundry["Foundry agents (shared)"]
+        disc["Source discovery · generators"]
+        orch["Manifest orchestrator"]
+        pr["PR creator"]
+        key[/"atlas-github-app connection<br/>App ID + private key"/]
+    end
+    mint["GitHub: mint a 1-hour token<br/>from the installation on the data repo"]
+    subgraph pub["northwind"]
+        srcs["inventory-api · storefront-web<br/>+ 20 more<br/><i>public · App not installed</i>"]
+    end
+    subgraph tc["talentconsulting"]
+        subgraph inst1["App installation"]
+            atlas["northwind-atlas<br/>manifest.json · catalogues"]
+        end
+    end
+    viewer["Render viewer<br/>Northwind's catalogue site"]
+
+    run -->|"tenant = talentconsulting/northwind-atlas"| orch
+    foundry <-->|"tenant in, token out"| mint
+    disc -->|"read token"| srcs
+    orch -->|"read token: manifest"| atlas
+    pr -->|"write token: open PR"| atlas
+    atlas -->|reads| viewer
+
+    style inst1 fill:transparent,stroke:#e0115f,stroke-width:2px
+    linkStyle 2,3 stroke:#00a383,stroke-width:2px
+    linkStyle 4 stroke:#e0115f,stroke-width:2px
+```
+
+### A company with private source repos (Acme)
+
+The company installs the App on its own organisation and keeps its data repo there, so one installation covers both the private sources and the data repo. A run for one tenant can't reach another tenant's private repos.
+
+```mermaid
+flowchart LR
+    run["talentsuite-atlas-backend<br/>Run All Flows with Acme's manifest URL"]
+    subgraph foundry["Foundry agents (shared)"]
+        disc["Source discovery · generators"]
+        orch["Manifest orchestrator"]
+        pr["PR creator"]
+        key[/"atlas-github-app connection<br/>same App, same key"/]
+    end
+    mint["GitHub: mint a 1-hour token<br/>from Acme's installation"]
+    subgraph acme["acme · private"]
+        subgraph inst2["Acme's App installation"]
+            orders["orders-api · private"]
+            portal["web-portal · private"]
+            data["acme-atlas<br/>manifest.json · catalogues"]
+        end
+    end
+    viewer["Render viewer<br/>Acme's own site"]
+
+    run -->|"tenant = acme/acme-atlas"| orch
+    foundry <-->|"tenant in, token out"| mint
+    disc -->|"read token: discovery"| orders
+    disc -.->|"generators: no token yet, fails"| portal
+    orch -->|"read token: manifest"| data
+    pr -->|"write token: open PR"| data
+    data -->|reads| viewer
+
+    style inst2 fill:transparent,stroke:#e0115f,stroke-width:2px
+    linkStyle 2,4 stroke:#00a383,stroke-width:2px
+    linkStyle 3 stroke:#d97706,stroke-width:2px
+    linkStyle 5 stroke:#e0115f,stroke-width:2px
+```
+
+The generators (every flow except user-journeys) still fetch individual files without a token, so they fail on private repos until they're changed to use the tenant's read token.
+
+### Keep the data repo beside private sources
+
+Tokens always come from the installation that covers the data repo. If a company's data repo lived in `talentconsulting`, its token couldn't read the company's private repos.
+
+```mermaid
+flowchart LR
+    subgraph tc["talentconsulting"]
+        subgraph inst3["App installation"]
+            data["acme-atlas · data repo"]
+        end
+    end
+    token["Read token from the<br/>talentconsulting installation"]
+    subgraph acme["acme · private"]
+        src["orders-api · web-portal"]
+    end
+
+    data -->|"tenant = talentconsulting/acme-atlas"| token
+    token -.->|"not found"| src
+
+    style inst3 fill:transparent,stroke:#e0115f,stroke-width:2px
+    linkStyle 1 stroke:#d97706,stroke-width:2px
+```
+
+| | Public source repos (Northwind) | Private source repos (Acme) |
+| --- | --- | --- |
+| Who installs the App | Talent Consulting, on `talentconsulting` | Acme, on its own organisation |
+| What the installation covers | `northwind-atlas` | `acme-atlas` and every private repo in the manifest |
+| Where the data repo lives | `talentconsulting` | Acme's organisation |
+| App setting "Where can this GitHub App be installed?" | "Only on this account" is enough | "Any account" |
+| Viewer | A Render service reading `northwind-atlas` | A Render service reading `acme-atlas` |
+
+To onboard a company with private repos:
+
+1. Change the generators to fetch files with the tenant's read token.
+2. Set the App's "Where can this GitHub App be installed?" to "Any account".
+3. The company creates a data repo in its organisation with a `manifest.json`, then installs the App on the data repo and every private repo in the manifest.
+4. Run [Run All Flows](#run-every-flow-against-one-repository) with the company's manifest URL. Pull requests arrive in its data repo.
+5. Deploy a Render viewer that reads the company's data repo.
+
 ## Database schema orchestration
 
 [`dbschema-generator`](agents/hosted/dbschema/dbschema-generator/README.md) scans a repository path for database entities and returns tables, columns, relationships, indexes, and named types. Each table also carries a `hasPii` flag -- the model's best-effort judgement on whether any of its columns plausibly holds personal data, for a human reviewer to check, never a certified compliance determination. [`dbschema-workflow`](agents/hosted/dbschema/dbschema-workflow/README.md) generates and optionally publishes one repository schema. [`dbschema-manifest-orchestrator`](agents/hosted/dbschema/dbschema-manifest-orchestrator/README.md) invokes one deferred workflow per changed repository and sends all successful schemas plus the updated manifest to [`dbschema-pr-creator`](agents/hosted/dbschema/dbschema-pr-creator/README.md) in one request.
