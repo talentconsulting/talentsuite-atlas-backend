@@ -2,11 +2,21 @@ name: Deploy .NET Version Workflow
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to use."
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
+          - test
 
 jobs:
   deploy:
     uses: ./.github/workflows/deploy-repo-metadata-agent.reusable.yml
     with:
+      environment: ${{ inputs.environment }}
       project_dir: agents/hosted/repometadata/repo-metadata-workflow
       service_name: repo-metadata-workflow
       expected_marker: invalid_source_url

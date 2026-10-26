@@ -3,6 +3,14 @@ name: Run Manifest Orchestrator
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: "Environment to use."
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
+          - test
       manifest_url:
         description: "Manifest blob URL, e.g. https://github.com/talentconsulting/talentsuite-atlas/blob/main/manifest.json"
         required: true
@@ -26,13 +34,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: run-manifest-orchestrator-${{ inputs.manifest_url }}-${{ inputs.flow }}
+  group: run-manifest-orchestrator-${{ inputs.manifest_url }}-${{ inputs.flow }}-${{ inputs.environment }}
   cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    environment: dev
+    environment: ${{ inputs.environment }}
     env:
       AZD_ENV_NAME: ci
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}

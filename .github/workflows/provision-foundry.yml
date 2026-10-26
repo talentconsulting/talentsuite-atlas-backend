@@ -11,32 +11,30 @@ on:
         options:
           - what-if
           - deploy
-      resource_group:
-        description: "Existing resource group to deploy into."
+      environment:
+        description: "Environment to provision. Uses infra/<environment>.bicepparam and the environment's AZURE_RESOURCE_GROUP variable."
         required: true
-        type: string
-        default: talent-day-rg
-      parameters_file:
-        description: "Bicep parameters file for the environment."
-        required: true
-        type: string
-        default: infra/dev.bicepparam
+        type: choice
+        default: dev
+        options:
+          - dev
+          - test
 
 permissions:
   id-token: write
   contents: read
 
 concurrency:
-  group: provision-foundry-${{ inputs.resource_group }}
+  group: provision-foundry-${{ inputs.environment }}
   cancel-in-progress: false
 
 jobs:
   provision:
     runs-on: ubuntu-latest
-    environment: dev
+    environment: ${{ inputs.environment }}
     env:
-      RESOURCE_GROUP: ${{ inputs.resource_group }}
-      PARAMETERS_FILE: ${{ inputs.parameters_file }}
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'talent-day-rg' }}
+      PARAMETERS_FILE: infra/${{ inputs.environment }}.bicepparam
       # Read by the parameters file. The connection is created only when both App values are set.
       DEPLOY_PRINCIPAL_ID: ${{ vars.DEPLOY_PRINCIPAL_ID }}
       ATLAS_GITHUB_APP_ID: ${{ secrets.ATLAS_GITHUB_APP_ID }}

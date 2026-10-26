@@ -3,6 +3,10 @@ name: Deploy Local Dev Config Agent
 on:
   workflow_call:
     inputs:
+      environment:
+        required: false
+        type: string
+        default: dev
       project_dir:
         required: true
         type: string
@@ -20,7 +24,7 @@ permissions:
 jobs:
   deploy-and-test:
     runs-on: ubuntu-latest
-    environment: dev
+    environment: ${{ inputs.environment }}
     env:
       AZD_ENV_NAME: ci
       AZURE_DEV_USER_AGENT: microsoft_foundry_skill

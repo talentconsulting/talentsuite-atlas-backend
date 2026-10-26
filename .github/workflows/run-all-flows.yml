@@ -3,6 +3,14 @@ name: Run All Flows Against A Repository
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: "Environment to use."
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
+          - test
       manifest_url:
         description: "Manifest blob URL, e.g. https://github.com/talentconsulting/talentsuite-atlas/blob/main/manifest.json"
         required: true
@@ -27,7 +35,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: run-all-flows-${{ inputs.manifest_url }}-${{ inputs.github_repo }}
+  group: run-all-flows-${{ inputs.manifest_url }}-${{ inputs.github_repo }}-${{ inputs.environment }}
   cancel-in-progress: false
 
 jobs:
@@ -97,7 +105,7 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
     runs-on: ubuntu-latest
-    environment: dev
+    environment: ${{ inputs.environment }}
     env:
       AZD_ENV_NAME: ci
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}

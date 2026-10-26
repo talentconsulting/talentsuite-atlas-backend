@@ -2,11 +2,21 @@ name: Deploy Local Dev Config PR Creator
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to use."
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
+          - test
 
 jobs:
   deploy:
     uses: ./.github/workflows/deploy-local-dev-config-agent.reusable.yml
     with:
+      environment: ${{ inputs.environment }}
       project_dir: agents/hosted/localdevconfig/local-dev-config-pr-creator
       service_name: local-dev-config-pr-creator
       expected_marker: invalid_repository

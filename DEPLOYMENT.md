@@ -22,11 +22,11 @@ It deploys into an existing resource group in incremental mode. Anything it does
 
 [`infra/dev.bicepparam`](infra/dev.bicepparam) describes the current environment in `talent-day-rg`. A what-if against it reports no real changes; the only differences listed are values the Foundry service manages itself (current capacity, endpoints, the default project). Its roles were assigned by hand under different names, so it sets `createRoleAssignments = false`; Azure would reject a second assignment of the same role.
 
-Run **Provision Foundry Infrastructure** from the Actions tab. `what-if` (the default) shows what would change and changes nothing; `deploy` applies it. Its inputs are the resource group and the parameters file.
+Run **Provision Foundry Infrastructure** from the Actions tab. `what-if` (the default) shows what would change and changes nothing; `deploy` applies it. Its `environment` input picks the GitHub environment, the parameters file (`infra/<environment>.bicepparam`) and the resource group (that environment's `AZURE_RESOURCE_GROUP` variable, defaulting to `talent-day-rg`).
 
 The provisioning identity needs **Contributor** on the resource group, plus **Role Based Access Control Administrator** when `createRoleAssignments` is on. The agent deploy identity (`AZURE_CLIENT_ID`) doesn't have either. Grant them to it, or set the `AZURE_PROVISION_CLIENT_ID` secret in the `dev` environment to a separate app registration with a federated credential for this repository's `dev` environment.
 
-Optional settings for the workflow, in the `dev` environment:
+Optional settings for the workflow, in each GitHub environment:
 
 | Name | Kind | Used for |
 | --- | --- | --- |
@@ -35,13 +35,52 @@ Optional settings for the workflow, in the `dev` environment:
 | `ATLAS_GITHUB_APP_ID` | Secret | Creates the `atlas-github-app` connection, with the private key. |
 | `ATLAS_GITHUB_APP_PRIVATE_KEY` | Secret | The App's PEM private key. |
 
-To create a new environment:
+### What to create before provisioning
 
-1. Create the resource group: `az group create --name <group> --location uksouth`.
-2. Create an app registration for GitHub Actions with a federated credential for the repository's environment, and set `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID`. This step isn't templated, because it needs Entra ID admin rights rather than Azure resource rights.
-3. Copy `infra/dev.bicepparam` with new, globally unique names and `createRoleAssignments = true`, and set `DEPLOY_PRINCIPAL_ID`.
-4. Run **Provision Foundry Infrastructure** with `deploy`, then set the `AZURE_AI_PROJECT_ENDPOINT` secret to the project endpoint in the run summary.
-5. Deploy the agents with their `deploy-*.agent.yml` workflows.
+Every deploy and run workflow has an `environment` input (`dev` or `test`, defaulting to `dev`) that picks the GitHub environment it runs in, and so the Azure identity, project and settings it uses. To add another environment, also add its name to the `environment` options in each workflow.
+
+The workflow can't create the resource group, the identity it signs in with, or that identity's roles, so these are set up by hand once per environment.
+
+In Azure:
+
+1. Create the resource group: `az group create --name <group> --location uksouth`. The template deploys into an existing group.
+2. Create an app registration for GitHub Actions with a federated credential for this repository's environment. The subject is `repo:talentconsulting@80040422/talentsuite-atlas-backend@1281435335:environment:<environment>`; the `Sign in to Azure` step of a workflow run prints it as the subject claim. This step isn't templated, because it needs Entra ID admin rights rather than Azure resource rights.
+3. Grant the app's service principal roles on the resource group:
+
+   ```bash
+   az role assignment create --assignee <app-client-id> --role Contributor \
+     --scope /subscriptions/<subscription-id>/resourceGroups/<group>
+   az role assignment create --assignee <app-client-id> --role "Role Based Access Control Administrator" \
+     --scope /subscriptions/<subscription-id>/resourceGroups/<group>
+   ```
+
+   **Contributor** creates the Foundry account, project, model deployments, Log Analytics and Application Insights. **Role Based Access Control Administrator** is needed only when `createRoleAssignments` is on, so the template can give the identity its Foundry Project Manager and Azure AI Developer roles.
+4. Check the subscription can host the resources:
+   - The `Microsoft.CognitiveServices`, `Microsoft.Insights` and `Microsoft.OperationalInsights` resource providers are registered (`az provider show --namespace <provider> --query registrationState`). Contributor on a resource group can't register them.
+   - There's enough GlobalStandard quota in the region for the model deployments in `modelDeployments` (`az cognitiveservices usage list --location <region>`). A deployment fails if the quota is short.
+
+In GitHub, create a repository environment with the environment's name, and in it:
+
+1. Set the `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID` secrets for the app registration.
+2. Set the `DEPLOY_PRINCIPAL_ID` variable to the service principal's object ID (`az ad sp show --id <app-client-id> --query id`), not its client ID.
+3. Optionally set `ATLAS_GITHUB_APP_ID` and `ATLAS_GITHUB_APP_PRIVATE_KEY` so the template creates the `atlas-github-app` connection. See [Tenants and the Atlas GitHub App](#tenants-and-the-atlas-github-app).
+
+### Provisioning and deploying the agents
+
+1. Copy `infra/test.bicepparam` to `infra/<environment>.bicepparam` with new, globally unique names.
+2. Run **Provision Foundry Infrastructure** for the environment with `what-if`, check the preview, then run it with `deploy`.
+3. Set the `AZURE_AI_PROJECT_ENDPOINT` secret to the project endpoint in the run summary.
+4. Set the `AZURE_RESOURCE_GROUP`, `AZURE_AI_ACCOUNT_NAME`, `AZURE_AI_PROJECT_NAME` and `AZURE_LOCATION` variables when they differ from the defaults in [GitHub Actions configuration](#github-actions-configuration). The agent workflows don't read them from the parameters file.
+5. Create the `openapi-pr-github` and `github-source-read` connections by hand (see [GitHub Actions configuration](#github-actions-configuration)). The template doesn't declare them, but several agent definitions still reference them, and an agent fails to deploy if a connection it references is missing.
+6. Deploy the agents with their `deploy-*.agent.yml` workflows, choosing the environment.
+
+### The test environment
+
+`test` was created this way in `atlas-test-rg` (UK South), with the "Atlas test deployments" app registration and `infra/test.bicepparam`. Its Role Based Access Control Administrator assignment has a condition that lets it assign or remove only the three roles the template uses (Foundry Project Manager, Azure AI Developer and Reader).
+
+### The dev environment
+
+The resource group, app registration ("Azure AI deployments"), roles, connections and secrets for `talent-day-rg` already exist. The one thing missing for provisioning is **Contributor** on `talent-day-rg` for that app's service principal: its existing roles (Azure AI Developer and Foundry Project Manager) can't read the resource group or run deployments, so the workflow fails at "Check the resource group exists". `dev.bicepparam` turns role assignments off, so it doesn't need Role Based Access Control Administrator.
 
 ## GitHub Actions configuration
 
