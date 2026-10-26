@@ -23,8 +23,6 @@ services:
         memory: 1Gi
     description: Publishes generated .NET version catalogs and an optional shared manifest update in one GitHub pull request.
     environmentVariables:
-      - name: GITHUB_PR_TOKEN
-        value: ${{connections.openapi-pr-github.credentials.github_token}}
       - name: GITHUB_APP_ID
         value: ${{connections.atlas-github-app.credentials.app_id}}
       - name: GITHUB_APP_PRIVATE_KEY

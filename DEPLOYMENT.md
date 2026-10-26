@@ -18,7 +18,7 @@ The agents run in an Azure AI Foundry project, which [Foundry infrastructure](#f
 - the `atlas-github-app` project connection, when the App ID and private key are supplied
 - the deploy identity's roles: **Foundry Project Manager** on the account and **Azure AI Developer** on the resource group
 
-It deploys into an existing resource group in incremental mode. Anything it doesn't declare is left alone, including other model deployments on the account and the older `openapi-pr-github` and `github-source-read` connections.
+It deploys into an existing resource group in incremental mode. Anything it doesn't declare is left alone, including other model deployments on the account and any other project connections.
 
 [`infra/dev.bicepparam`](infra/dev.bicepparam) describes the current environment in `talent-day-rg`. A what-if against it reports no real changes; the only differences listed are values the Foundry service manages itself (current capacity, endpoints, the default project). Its roles were assigned by hand under different names, so it sets `createRoleAssignments = false`; Azure would reject a second assignment of the same role.
 
@@ -63,7 +63,7 @@ In GitHub, create a repository environment with the environment's name, and in i
 
 1. Set the `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID` secrets for the app registration.
 2. Set the `DEPLOY_PRINCIPAL_ID` variable to the service principal's object ID (`az ad sp show --id <app-client-id> --query id`), not its client ID.
-3. Optionally set `ATLAS_GITHUB_APP_ID` and `ATLAS_GITHUB_APP_PRIVATE_KEY` so the template creates the `atlas-github-app` connection. See [Tenants and the Atlas GitHub App](#tenants-and-the-atlas-github-app).
+3. Set the `ATLAS_GITHUB_APP_ID` and `ATLAS_GITHUB_APP_PRIVATE_KEY` secrets so the template creates the `atlas-github-app` connection. Every agent that reads or writes GitHub references it, and an agent fails to deploy if a connection it references is missing. See [Tenants and the Atlas GitHub App](#tenants-and-the-atlas-github-app).
 
 ### Provisioning and deploying the agents
 
@@ -71,7 +71,7 @@ In GitHub, create a repository environment with the environment's name, and in i
 2. Run **Provision Foundry Infrastructure** for the environment with `what-if`, check the preview, then run it with `deploy`.
 3. Set the `AZURE_AI_PROJECT_ENDPOINT` secret to the project endpoint in the run summary.
 4. Set the `AZURE_RESOURCE_GROUP`, `AZURE_AI_ACCOUNT_NAME`, `AZURE_AI_PROJECT_NAME` and `AZURE_LOCATION` variables when they differ from the defaults in [GitHub Actions configuration](#github-actions-configuration). The agent workflows don't read them from the parameters file.
-5. Create the `openapi-pr-github` and `github-source-read` connections by hand (see [GitHub Actions configuration](#github-actions-configuration)). The template doesn't declare them, but several agent definitions still reference them, and an agent fails to deploy if a connection it references is missing.
+5. Check the run created the `atlas-github-app` connection. If the App secrets weren't set, set them and run it again.
 6. Deploy the agents with their `deploy-*.agent.yml` workflows, choosing the environment.
 
 ### The test environment
@@ -80,7 +80,7 @@ In GitHub, create a repository environment with the environment's name, and in i
 
 ### The dev environment
 
-The resource group, app registration ("Azure AI deployments"), roles, connections and secrets for `talent-day-rg` already exist. The one thing missing for provisioning is **Contributor** on `talent-day-rg` for that app's service principal: its existing roles (Azure AI Developer and Foundry Project Manager) can't read the resource group or run deployments, so the workflow fails at "Check the resource group exists". `dev.bicepparam` turns role assignments off, so it doesn't need Role Based Access Control Administrator.
+The resource group, app registration ("Azure AI deployments"), roles, `atlas-github-app` connection and secrets for `talent-day-rg` already exist. The one thing missing for provisioning is **Contributor** on `talent-day-rg` for that app's service principal: its existing roles (Azure AI Developer and Foundry Project Manager) can't read the resource group or run deployments, so the workflow fails at "Check the resource group exists". `dev.bicepparam` turns role assignments off, so it doesn't need Role Based Access Control Administrator.
 
 ## GitHub Actions configuration
 
@@ -95,28 +95,7 @@ Create a GitHub environment named `dev` with these secrets:
 
 The Azure identity needs deployment access to the Foundry project. The hosted workflow identity needs permission to invoke the other agents in that project.
 
-Create a Foundry Custom keys project connection named `openapi-pr-github` with a write-only `github_token` field. Grant that fine-grained token access only to the destination specification repository, with:
-
-- Metadata: read
-- Contents: read and write
-- Pull requests: read and write
-
-The PR creator resolves the token from `${{connections.openapi-pr-github.credentials.github_token}}` when its sandbox starts. It is not stored in the agent definition, passed to the orchestration agent, or accepted in an agent request.
-
-The database-schema PR creator reuses `openapi-pr-github`, because it publishes to the same catalogue repository with the same permissions. No second GitHub secret or Foundry connection is required.
-
-### Source-repository read connection
-
-Each `*-source-discovery` agent (`openapi`, `dbschema`, `eventcatalog`, `service-dependency`, `local-dev-config`, `repo-metadata`) downloads a GitHub archive of whatever repository `sourceUrl` points at, which can be any repository the pipeline is asked to analyze -- not just the destination catalogue repository. These agents previously reused `openapi-pr-github` for `GITHUB_READ_TOKEN`, but that connection is a fine-grained PAT deliberately scoped to write access on the destination catalogue repository only. Presenting it to an unrelated source repository doesn't fail closed with a clear permissions error -- GitHub returns a plain `404` for a token with no grant on that repository, which is indistinguishable from the repository not existing, even when it's public.
-
-Create a second Foundry Custom keys project connection named `github-source-read` with a `github_token` field holding a token that can read whatever source repositories the pipeline will be pointed at:
-
-- A classic PAT with the `public_repo` scope covers any public repository and raises the rate limit well above the 60 requests/hour anonymous limit.
-- If source repositories are private, use a fine-grained PAT with read-only `Contents` and `Metadata` access granted across the relevant organization(s)/repositories instead.
-
-Each `*-source-discovery` agent resolves `GITHUB_READ_TOKEN` from `${{connections.github-source-read.credentials.github_token}}`. `openapi-pr-github` remains scoped to writes on the destination catalogue repository only; nothing in this pipeline should reuse it for reading arbitrary source repositories.
-
-Note: the `*-manifest-orchestrator` agents also read `GITHUB_READ_TOKEN` (currently still `openapi-pr-github`), but only to fetch `manifest.json` from the same destination catalogue repository that token is already scoped to -- that usage is correctly scoped and doesn't need `github-source-read`. However, those orchestrators separately check each manifest entry's *source* repository branch-head commit via the GitHub API using the same token, which has the identical scoping problem described above; that call site is not yet updated to use `github-source-read`.
+The agents authenticate to GitHub only through the Atlas GitHub App; see below.
 
 ### Tenants and the Atlas GitHub App
 
@@ -131,10 +110,12 @@ To set it up:
 
 1. Create a GitHub App (for example "TalentSuite Atlas") owned by the organisation that runs the pipeline. Turn off webhooks. Repository permissions: **Contents** read and write, **Pull requests** read and write, **Metadata** read. Generate a private key.
 2. Install the App on each tenant's organisation, choosing their data repository plus any private source repositories.
-3. Create a Foundry Custom keys project connection named `atlas-github-app` with two fields: `app_id` (the App ID) and `private_key` (the PEM contents; literal `\n` sequences are accepted).
+3. Set the `ATLAS_GITHUB_APP_ID` and `ATLAS_GITHUB_APP_PRIVATE_KEY` secrets in the GitHub environment and run **Provision Foundry Infrastructure**, which creates the Foundry Custom keys project connection `atlas-github-app` with two fields: `app_id` (the App ID) and `private_key` (the PEM contents; literal `\n` sequences are accepted).
 4. Redeploy the agents. Each one that reads or writes GitHub resolves `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` from `atlas-github-app`.
 
-The connection must exist before the agents are deployed, because their definitions reference it. Until the App is configured, agents fall back to `GITHUB_READ_TOKEN` (`github-source-read`) and `GITHUB_PR_TOKEN` (`openapi-pr-github`). Once runs succeed with the App, remove those environment variables from each `azure.yaml`, redeploy, and then delete the two connections.
+The connection must exist before the agents are deployed, because their definitions reference it. A request without a `tenant` reads public repositories anonymously, which GitHub limits to 60 requests an hour, and can't open pull requests.
+
+The agents used to fall back to personal access tokens in the `openapi-pr-github` and `github-source-read` connections. Their definitions no longer reference them, so once every agent in an environment has been redeployed those connections can be deleted.
 
 Optional `dev` environment variables are:
 
@@ -167,7 +148,7 @@ The PR creator and workflow smoke tests use invalid input deliberately. This ver
 
 ## Local deployment
 
-Authenticate Azure CLI and azd, configure each agent project's azd environment with the existing project endpoint, create the `openapi-pr-github` connection, and deploy in dependency order:
+Authenticate Azure CLI and azd, configure each agent project's azd environment with the existing project endpoint, make sure the `atlas-github-app` connection exists, and deploy in dependency order:
 
 ```bash
 cd agents/hosted/openapi/openapi-spec-pr-creator

@@ -32,8 +32,6 @@ services:
         value: ${SERVICE_DEPENDENCY_MANIFEST_MAX_CATALOGS}
       - name: SERVICE_DEPENDENCY_MANIFEST_CONCURRENCY
         value: ${SERVICE_DEPENDENCY_MANIFEST_CONCURRENCY}
-      - name: GITHUB_READ_TOKEN
-        value: ${{connections.openapi-pr-github.credentials.github_token}}
       - name: GITHUB_APP_ID
         value: ${{connections.atlas-github-app.credentials.app_id}}
       - name: GITHUB_APP_PRIVATE_KEY

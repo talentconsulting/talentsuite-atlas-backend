@@ -23,8 +23,6 @@ services:
         memory: 1Gi
     description: Publishes user-journey catalogs (JSON and Mermaid Markdown) and an optional manifest update in one pull request.
     environmentVariables:
-      - name: GITHUB_PR_TOKEN
-        value: ${{connections.openapi-pr-github.credentials.github_token}}
       - name: GITHUB_APP_ID
         value: ${{connections.atlas-github-app.credentials.app_id}}
       - name: GITHUB_APP_PRIVATE_KEY

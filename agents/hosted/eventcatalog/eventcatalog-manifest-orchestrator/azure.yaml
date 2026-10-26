@@ -37,8 +37,6 @@ services:
         value: ${EVENTCATALOG_MANIFEST_WORKFLOW_CONCURRENCY}
       - name: EVENTCATALOG_WORKFLOW_TIMEOUT_SECONDS
         value: ${EVENTCATALOG_WORKFLOW_TIMEOUT_SECONDS}
-      - name: GITHUB_READ_TOKEN
-        value: ${{connections.openapi-pr-github.credentials.github_token}}
       - name: GITHUB_APP_ID
         value: ${{connections.atlas-github-app.credentials.app_id}}
       - name: GITHUB_APP_PRIVATE_KEY
