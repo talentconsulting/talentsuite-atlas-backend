@@ -259,7 +259,8 @@ def run_manifest(
         try:
             generator_input = build_generator_input(entry, blob, fetch)
             repository_label = generator_input["repository"]
-            generated = invoker(project, generator_name, model, generator_input)
+            # The tenant lets the generator record its model usage against the right data repository.
+            generated = invoker(project, generator_name, model, {**generator_input, "tenant": blob.tenant})
             return _validate_summary_output(generated, generator_input["repository"]), None
         except Exception as error:
             return None, {
