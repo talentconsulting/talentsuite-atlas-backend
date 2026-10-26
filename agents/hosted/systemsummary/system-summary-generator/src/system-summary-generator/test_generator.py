@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from generator import GenerationError, generate_from_text, parse_input, validate_summary
+from generator import GenerationError, generate_from_text, parse_input, source_prompt, validate_summary
 
 
 REPOSITORY = "source/catalog"
@@ -38,6 +38,15 @@ class InputTests(unittest.TestCase):
         with_extra["extra"] = True
         with self.assertRaises(GenerationError):
             parse_input(json.dumps(with_extra))
+
+    def test_accepts_a_tenant_and_keeps_it_out_of_the_prompt(self):
+        result = parse_input(json.dumps(payload(tenant="org/catalogue")))
+        self.assertNotIn("tenant", result)
+        self.assertNotIn("org/catalogue", source_prompt(result))
+
+    def test_rejects_an_invalid_tenant(self):
+        with self.assertRaisesRegex(GenerationError, "tenant"):
+            parse_input(json.dumps(payload(tenant="not-a-repository")))
 
     def test_rejects_an_invalid_repository(self):
         with self.assertRaises(GenerationError):
