@@ -272,6 +272,11 @@ def _fold_sent_only_messages(catalog: dict[str, Any], warnings: list[dict[str, A
                              "message": f"Recorded senders of {message['name']!r} on its declaration in {target.get('namespace')!r}."})
 
 
+def _is_context_overflow(error: Exception) -> bool:
+    message = str(error)
+    return "context_length_exceeded" in message or "exceeds the context window" in message
+
+
 def _generate_batch(
     project: Any,
     generator_name: str,
@@ -281,18 +286,39 @@ def _generate_batch(
     invoker: Callable[..., Any],
     max_attempts: int = 3,
     retry_delay_seconds: float = 5.0,
-) -> dict[str, Any]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Returns the batch's catalogs and any files skipped as too large for the model.
+
+    A batch the model cannot fit is split in half and each half generated on its own (not retried as is,
+    since it would overflow again). A single file that still overflows is skipped with a warning rather
+    than failing the whole repository; such files are generated or vendored code, not message declarations.
+    """
     last_error: Exception | None = None
     for attempt in range(max(1, max_attempts)):
         if attempt:
             # Back off before retrying so concurrent batches do not hammer a throttled model deployment.
             time.sleep(retry_delay_seconds * 2 ** (attempt - 1))
         try:
-            return validate_catalog(invoker(project, generator_name, model, {"sourceUrl": source_url, "sourceFiles": batch}, max_attempts=1))
+            return [validate_catalog(invoker(project, generator_name, model, {"sourceUrl": source_url, "sourceFiles": batch}, max_attempts=1))], []
         except Exception as error:
+            if _is_context_overflow(error):
+                break
             last_error = error
-    assert last_error is not None
-    raise last_error
+    else:
+        assert last_error is not None
+        raise last_error
+    if len(batch) == 1:
+        return [], [{"files": batch, "errorType": "SourceFileTooLarge", "message": "Skipped: the file alone exceeds the model's context window."}]
+    middle = len(batch) // 2
+    catalogs: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for half in (batch[:middle], batch[middle:]):
+        half_catalogs, half_skipped = _generate_batch(
+            project, generator_name, model, source_url, half, invoker, max_attempts, retry_delay_seconds,
+        )
+        catalogs.extend(half_catalogs)
+        skipped.extend(half_skipped)
+    return catalogs, skipped
 
 
 def _publisher_payload(request: dict[str, Any], catalog: dict[str, Any]) -> dict[str, Any]:
@@ -349,9 +375,12 @@ def run_workflow(
                 ]
             # Collect in batch order, not completion order, so merge_catalogs keeps the same first occurrence.
             catalogs = []
+            skipped_files: list[dict[str, Any]] = []
             for batch, future in zip(batches, futures):
                 try:
-                    catalogs.append(future.result())
+                    batch_catalogs, batch_skipped = future.result()
+                    catalogs.extend(batch_catalogs)
+                    skipped_files.extend(batch_skipped)
                 except Exception as error:
                     batch_errors.append({"files": batch, "errorType": type(error).__name__, "message": str(error)[:300]})
             if batch_errors:
@@ -362,6 +391,7 @@ def run_workflow(
             if not catalogs:
                 raise WorkflowError("generation_failed", "No source batch produced a valid event and command catalog.")
             catalog, merge_warnings = merge_catalogs(catalogs)
+            batch_errors.extend(skipped_files)
             batch_errors.extend(merge_warnings)
             # An empty result here (files existed but none declared an event or command) is also
             # valid -- same reasoning as the empty-discovery case above.
