@@ -1,12 +1,47 @@
 # Deployment
 
-The OpenAPI pipeline uses an existing Azure AI Foundry project and five hosted agents. Deploy them in this order:
+The agents run in an Azure AI Foundry project, which [Foundry infrastructure](#foundry-infrastructure) describes how to create. The OpenAPI pipeline has five hosted agents. Deploy them in this order:
 
 1. `openapi-source-discovery`
 2. `openapi-spec-generator`
 3. `openapi-spec-pr-creator`
 4. `openapi-spec-workflow`
 5. `openapi-manifest-orchestrator` (optional manifest entry point)
+
+## Foundry infrastructure
+
+[`infra/main.bicep`](infra/main.bicep) declares the Foundry resources the agents run in:
+
+- the Foundry (AI Services) account and its project
+- the `gpt-4o` and `gpt-4.1` model deployments the agents call
+- a Log Analytics workspace and Application Insights, connected to the project
+- the `atlas-github-app` project connection, when the App ID and private key are supplied
+- the deploy identity's roles: **Foundry Project Manager** on the account and **Azure AI Developer** on the resource group
+
+It deploys into an existing resource group in incremental mode. Anything it doesn't declare is left alone, including other model deployments on the account and the older `openapi-pr-github` and `github-source-read` connections.
+
+[`infra/dev.bicepparam`](infra/dev.bicepparam) describes the current environment in `talent-day-rg`. A what-if against it reports no real changes; the only differences listed are values the Foundry service manages itself (current capacity, endpoints, the default project). Its roles were assigned by hand under different names, so it sets `createRoleAssignments = false`; Azure would reject a second assignment of the same role.
+
+Run **Provision Foundry Infrastructure** from the Actions tab. `what-if` (the default) shows what would change and changes nothing; `deploy` applies it. Its inputs are the resource group and the parameters file.
+
+The provisioning identity needs **Contributor** on the resource group, plus **Role Based Access Control Administrator** when `createRoleAssignments` is on. The agent deploy identity (`AZURE_CLIENT_ID`) doesn't have either. Grant them to it, or set the `AZURE_PROVISION_CLIENT_ID` secret in the `dev` environment to a separate app registration with a federated credential for this repository's `dev` environment.
+
+Optional settings for the workflow, in the `dev` environment:
+
+| Name | Kind | Used for |
+| --- | --- | --- |
+| `AZURE_PROVISION_CLIENT_ID` | Secret | A separate identity for provisioning. Defaults to `AZURE_CLIENT_ID`. |
+| `DEPLOY_PRINCIPAL_ID` | Variable | Object ID of the agent deploy identity, for its role assignments. |
+| `ATLAS_GITHUB_APP_ID` | Secret | Creates the `atlas-github-app` connection, with the private key. |
+| `ATLAS_GITHUB_APP_PRIVATE_KEY` | Secret | The App's PEM private key. |
+
+To create a new environment:
+
+1. Create the resource group: `az group create --name <group> --location uksouth`.
+2. Create an app registration for GitHub Actions with a federated credential for the repository's environment, and set `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID`. This step isn't templated, because it needs Entra ID admin rights rather than Azure resource rights.
+3. Copy `infra/dev.bicepparam` with new, globally unique names and `createRoleAssignments = true`, and set `DEPLOY_PRINCIPAL_ID`.
+4. Run **Provision Foundry Infrastructure** with `deploy`, then set the `AZURE_AI_PROJECT_ENDPOINT` secret to the project endpoint in the run summary.
+5. Deploy the agents with their `deploy-*.agent.yml` workflows.
 
 ## GitHub Actions configuration
 
