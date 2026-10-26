@@ -1,0 +1,93 @@
+name: Provision Foundry Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "what-if previews the changes; deploy applies them."
+        required: true
+        type: choice
+        default: what-if
+        options:
+          - what-if
+          - deploy
+      resource_group:
+        description: "Existing resource group to deploy into."
+        required: true
+        type: string
+        default: talent-day-rg
+      parameters_file:
+        description: "Bicep parameters file for the environment."
+        required: true
+        type: string
+        default: infra/dev.bicepparam
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: provision-foundry-${{ inputs.resource_group }}
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      RESOURCE_GROUP: ${{ inputs.resource_group }}
+      PARAMETERS_FILE: ${{ inputs.parameters_file }}
+      # Read by the parameters file. The connection is created only when both App values are set.
+      DEPLOY_PRINCIPAL_ID: ${{ vars.DEPLOY_PRINCIPAL_ID }}
+      ATLAS_GITHUB_APP_ID: ${{ secrets.ATLAS_GITHUB_APP_ID }}
+      ATLAS_GITHUB_APP_PRIVATE_KEY: ${{ secrets.ATLAS_GITHUB_APP_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Provisioning creates resources (and optionally role assignments), which the agent deploy
+      # identity can't do. AZURE_PROVISION_CLIENT_ID names a separate identity for it when set.
+      - name: Sign in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_PROVISION_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Check the resource group exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! az group show --name "$RESOURCE_GROUP" --output none 2>/dev/null; then
+            echo "::error::Resource group $RESOURCE_GROUP does not exist or this identity can't read it. Create it first: az group create --name $RESOURCE_GROUP --location uksouth"
+            exit 1
+          fi
+
+      - name: Preview changes
+        if: inputs.mode == 'what-if'
+        shell: bash
+        run: |
+          set -euo pipefail
+          az deployment group what-if \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file infra/main.bicep \
+            --parameters "$PARAMETERS_FILE" \
+            --mode Incremental
+
+      - name: Deploy
+        if: inputs.mode == 'deploy'
+        shell: bash
+        run: |
+          set -euo pipefail
+          az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "foundry-${GITHUB_RUN_ID}" \
+            --template-file infra/main.bicep \
+            --parameters "$PARAMETERS_FILE" \
+            --mode Incremental \
+            --query properties.outputs > outputs.json
+          endpoint=$(jq -r '.projectEndpoint.value' outputs.json)
+          {
+            echo "### Foundry provisioned"
+            echo ""
+            echo "Project endpoint (the \`AZURE_AI_PROJECT_ENDPOINT\` secret): \`$endpoint\`"
+          } >> "$GITHUB_STEP_SUMMARY"
