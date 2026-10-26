@@ -115,13 +115,13 @@ One set of agents serves every tenant. A tenant is identified by its **data repo
 
 In the diagrams, green links use the read-only token, the pink link uses the write token, the pink box is what the App installation covers, and the dashed orange link doesn't work yet.
 
-### DfE: public source repos
+### A company with public source repos
 
-The App is installed only on `talentsuite-atlas`. DfE's source repos are public, so the read token can fetch them without DfE installing anything.
+In this example, Northwind's source code is public and its data repo, `northwind-atlas`, lives in `talentconsulting`. The App is installed only on that data repo. The read token can fetch public repos, so Northwind doesn't install anything.
 
 ```mermaid
 flowchart LR
-    run["talentsuite-atlas-backend<br/>Run All Flows with DfE's manifest URL"]
+    run["talentsuite-atlas-backend<br/>Run All Flows with Northwind's manifest URL"]
     subgraph foundry["Foundry agents (shared)"]
         disc["Source discovery · generators"]
         orch["Manifest orchestrator"]
@@ -129,17 +129,17 @@ flowchart LR
         key[/"atlas-github-app connection<br/>App ID + private key"/]
     end
     mint["GitHub: mint a 1-hour token<br/>from the installation on the data repo"]
-    subgraph sfa["SkillsFundingAgency"]
-        srcs["das-commitments · das-recruit<br/>das-reservations · + 43 more<br/><i>public · App not installed</i>"]
+    subgraph pub["northwind"]
+        srcs["inventory-api · storefront-web<br/>+ 20 more<br/><i>public · App not installed</i>"]
     end
     subgraph tc["talentconsulting"]
         subgraph inst1["App installation"]
-            atlas["talentsuite-atlas<br/>manifest.json · catalogues"]
+            atlas["northwind-atlas<br/>manifest.json · catalogues"]
         end
     end
-    viewer["Render viewer<br/>DfE's catalogue site"]
+    viewer["Render viewer<br/>Northwind's catalogue site"]
 
-    run -->|"tenant = talentconsulting/talentsuite-atlas"| orch
+    run -->|"tenant = talentconsulting/northwind-atlas"| orch
     foundry <-->|"tenant in, token out"| mint
     disc -->|"read token"| srcs
     orch -->|"read token: manifest"| atlas
@@ -151,7 +151,7 @@ flowchart LR
     linkStyle 4 stroke:#e0115f,stroke-width:2px
 ```
 
-### A company with private source repos
+### A company with private source repos (Acme)
 
 The company installs the App on its own organisation and keeps its data repo there, so one installation covers both the private sources and the data repo. A run for one tenant can't reach another tenant's private repos.
 
@@ -213,13 +213,13 @@ flowchart LR
     linkStyle 1 stroke:#d97706,stroke-width:2px
 ```
 
-| | DfE (public) | Company with private repos |
+| | Public source repos (Northwind) | Private source repos (Acme) |
 | --- | --- | --- |
-| Who installs the App | Talent Consulting, on `talentconsulting` | The company, on its own organisation |
-| What the installation covers | `talentsuite-atlas` | The data repo and every private repo in the manifest |
-| Where the data repo lives | `talentconsulting` | The company's organisation |
+| Who installs the App | Talent Consulting, on `talentconsulting` | Acme, on its own organisation |
+| What the installation covers | `northwind-atlas` | `acme-atlas` and every private repo in the manifest |
+| Where the data repo lives | `talentconsulting` | Acme's organisation |
 | App setting "Where can this GitHub App be installed?" | "Only on this account" is enough | "Any account" |
-| Viewer | Render service reading `talentsuite-atlas` | A second Render service reading the company's data repo |
+| Viewer | A Render service reading `northwind-atlas` | A Render service reading `acme-atlas` |
 
 To onboard a company with private repos:
 
