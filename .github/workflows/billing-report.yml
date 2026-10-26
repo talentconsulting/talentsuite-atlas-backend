@@ -1,0 +1,74 @@
+name: Usage Billing Report
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to use."
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
+          - test
+      month:
+        description: "Month to report, yyyy-mm. Defaults to the previous month."
+        required: false
+        type: string
+  # Early on the 2nd, so the previous month's last runs are in the ledger.
+  schedule:
+    - cron: "0 7 2 * *"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # A scheduled run reports every environment; a manual run reports the one chosen.
+        environment: ${{ fromJSON(inputs.environment && format('["{0}"]', inputs.environment) || '["dev", "test"]') }}
+    environment: ${{ matrix.environment }}
+    env:
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'talent-day-rg' }}
+      BILLING_MONTH: ${{ inputs.month }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sign in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_PROVISION_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # A one-hour, read-only SAS for the usage table, signed with the account key.
+      - name: Get a read URL for the usage ledger
+        shell: bash
+        run: |
+          set -euo pipefail
+          account=$(az storage account list --resource-group "$RESOURCE_GROUP" \
+            --query "[?tags.Purpose=='atlas-usage-ledger'].name | [0]" --output tsv)
+          if [ -z "$account" ]; then
+            echo "::error::No usage ledger storage account in $RESOURCE_GROUP. Run Provision Foundry Infrastructure first."
+            exit 1
+          fi
+          key=$(az storage account keys list --resource-group "$RESOURCE_GROUP" --account-name "$account" --query "[0].value" --output tsv)
+          echo "::add-mask::$key"
+          sas=$(az storage table generate-sas --account-name "$account" --account-key "$key" --name usage \
+            --permission r --https-only --expiry "$(date -u -d '+1 hour' +%Y-%m-%dT%H:%MZ)" --output tsv)
+          echo "::add-mask::$sas"
+          echo "USAGE_QUERY_URL=https://$account.table.core.windows.net/usage?$sas" >> "$GITHUB_ENV"
+
+      - name: Price the month's usage
+        env:
+          OUTPUT_DIR: billing-report
+        run: python3 scripts/billing_report.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: billing-report-${{ matrix.environment }}
+          path: billing-report/

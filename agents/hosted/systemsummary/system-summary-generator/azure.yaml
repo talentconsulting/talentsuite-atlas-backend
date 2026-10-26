@@ -20,6 +20,8 @@ services:
       resources: { cpu: "0.5", memory: 1Gi }
     description: Reads a repository's already-published database, event, and dependency catalogs and returns a factual system summary.
     environmentVariables:
+      - name: USAGE_LEDGER_URL
+        value: ${{connections.atlas-usage-ledger.credentials.table_url}}
       - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
         value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
     kind: hosted

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 import github_app
+import usage_ledger
 
 MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 250 * 1024 * 1024
@@ -344,6 +345,7 @@ def _foundry_completion(prompt: str) -> str:
         text={"format": {"type": "json_object"}},
         timeout=180,
     )
+    usage_ledger.record(response, "dbschema-generator", model)
     return response.output_text
 
 
@@ -477,6 +479,7 @@ def generate_from_text(
     completion: Callable[[str], str] = _foundry_completion,
     source_loader: Callable[[SourceLocation], dict[str, str]] | None = None,
 ) -> dict[str, object]:
+    usage_ledger.begin(user_input)
     payload = parse_input(user_input)
     location = parse_source_url(payload["sourceUrl"])
     source_loader = source_loader or functools.partial(_download_sources, tenant=payload.get("tenant"))

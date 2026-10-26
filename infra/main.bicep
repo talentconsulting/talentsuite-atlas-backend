@@ -1,6 +1,7 @@
 // The Foundry resources the hosted agents run in: an AI Services account with one project, the model
 // deployments the agents call, Application Insights for traces, the project connections the agents read
-// their GitHub credentials from, and the roles the GitHub Actions deploy identity needs.
+// their GitHub credentials from, the usage ledger the agents record model usage in for billing, an optional
+// monthly cost budget, and the roles the GitHub Actions deploy identity needs.
 //
 // Deploy into an existing resource group in incremental mode. Resources this template does not declare
 // (for example other model deployments on the account) are left alone.
@@ -62,6 +63,21 @@ param githubAppId string = ''
 @secure()
 @description('Atlas GitHub App private key (PEM). Literal \\n sequences are accepted by the agents.')
 param githubAppPrivateKey string = ''
+
+@description('Storage account holding the usage ledger table. Globally unique, 3-24 lowercase letters and digits.')
+param usageStorageName string = take('${toLower(replace(accountName, '-', ''))}usage', 24)
+
+@description('Expiry of the add-only SAS the agents write usage with. Each provisioning run issues a new one.')
+param usageSasExpiry string = dateTimeAdd(utcNow(), 'P1Y')
+
+@description('Monthly cost budget for the resource group, in the billing currency. 0 skips the budget.')
+param budgetAmount int = 0
+
+@description('First day of the budget\'s first month (yyyy-MM-01). Azure rejects a change to it, so keep it fixed per environment.')
+param budgetStartDate string = '2026-10-01'
+
+@description('Who is emailed when the budget reaches 80% and 100% of actual spend, or is forecast to pass 100%.')
+param budgetContactEmails array = []
 
 // Built-in role definition IDs.
 var foundryProjectManagerRoleId = 'eadc314b-1a2d-4efa-be10-5d325db5065e'
@@ -171,6 +187,89 @@ resource githubAppConnection 'Microsoft.CognitiveServices/accounts/projects/conn
   }
 }
 
+// The usage ledger: one row per model call, per tenant and month, read by the billing report.
+resource usageStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: usageStorageName
+  location: location
+  tags: union(tags, { Purpose: 'atlas-usage-ledger' })
+  kind: 'StorageV2'
+  sku: { name: 'Standard_LRS' }
+  properties: {
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+    allowBlobPublicAccess: false
+    // The agents write with a SAS, which is signed with the account key.
+    allowSharedKeyAccess: true
+  }
+}
+
+resource usageTableService 'Microsoft.Storage/storageAccounts/tableServices@2023-05-01' = {
+  parent: usageStorage
+  name: 'default'
+}
+
+resource usageTable 'Microsoft.Storage/storageAccounts/tableServices/tables@2023-05-01' = {
+  parent: usageTableService
+  name: 'usage'
+}
+
+// Add-only: an agent can record usage but not read, change or delete any.
+var usageTableSas = usageStorage.listServiceSas('2023-05-01', {
+  canonicalizedResource: '/table/${usageStorageName}/${usageTable.name}'
+  signedPermission: 'a'
+  signedProtocol: 'https'
+  signedExpiry: usageSasExpiry
+}).serviceSasToken
+
+resource usageLedgerConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = {
+  parent: project
+  name: 'atlas-usage-ledger'
+  properties: {
+    category: 'CustomKeys'
+    authType: 'CustomKeys'
+    target: '_'
+    isSharedToAll: false
+    credentials: {
+      keys: {
+        table_url: '${usageStorage.properties.primaryEndpoints.table}${usageTable.name}?${usageTableSas}'
+      }
+    }
+  }
+}
+
+resource budget 'Microsoft.Consumption/budgets@2023-11-01' = if (budgetAmount > 0 && !empty(budgetContactEmails)) {
+  name: '${resourceGroup().name}-monthly'
+  properties: {
+    category: 'Cost'
+    amount: budgetAmount
+    timeGrain: 'Monthly'
+    timePeriod: { startDate: budgetStartDate }
+    notifications: {
+      actual80: {
+        enabled: true
+        operator: 'GreaterThanOrEqualTo'
+        threshold: 80
+        thresholdType: 'Actual'
+        contactEmails: budgetContactEmails
+      }
+      actual100: {
+        enabled: true
+        operator: 'GreaterThanOrEqualTo'
+        threshold: 100
+        thresholdType: 'Actual'
+        contactEmails: budgetContactEmails
+      }
+      forecast100: {
+        enabled: true
+        operator: 'GreaterThanOrEqualTo'
+        threshold: 100
+        thresholdType: 'Forecasted'
+        contactEmails: budgetContactEmails
+      }
+    }
+  }
+}
+
 // The project's identity reads the traces it writes.
 resource projectReadsAppInsights 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createRoleAssignments) {
   scope: appInsights
@@ -206,3 +305,4 @@ resource deployerDevelopsAi 'Microsoft.Authorization/roleAssignments@2022-04-01'
 output projectEndpoint string = 'https://${accountName}.services.ai.azure.com/api/projects/${projectName}'
 output accountName string = account.name
 output projectName string = project.name
+output usageStorageName string = usageStorage.name

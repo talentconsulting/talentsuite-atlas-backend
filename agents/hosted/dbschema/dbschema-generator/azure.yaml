@@ -23,6 +23,8 @@ services:
         memory: 1Gi
     description: Scans one GitHub repository path for database entities and returns a validated JSON representation of tables, columns, relationships, indexes, and types.
     environmentVariables:
+      - name: USAGE_LEDGER_URL
+        value: ${{connections.atlas-usage-ledger.credentials.table_url}}
       - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
         value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
       - name: GITHUB_APP_ID

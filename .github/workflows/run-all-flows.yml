@@ -176,7 +176,7 @@ jobs:
             --arg targetRepository "$TARGET_REPOSITORY" \
             --arg targetBaseBranch "$TARGET_BASE_BRANCH" \
             --argjson deferPublication "$DEFER_PUBLICATION" \
-            '{sourceUrl: $sourceUrl, targetRepository: $targetRepository}
+            '{sourceUrl: $sourceUrl, targetRepository: $targetRepository, tenant: $targetRepository}
              + (if $targetBaseBranch != "" then {targetBaseBranch: $targetBaseBranch} else {} end)
              + (if $deferPublication then {deferPublication: true} else {} end)')
           echo "Payload: $payload"

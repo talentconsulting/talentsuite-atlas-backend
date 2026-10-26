@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 import github_app
+import usage_ledger
 
 
 MAX_SOURCE_FILES = 20
@@ -211,6 +212,7 @@ def _foundry_completion(instructions: str, prompt: str) -> str:
         model=model, instructions=instructions, input=prompt, max_output_tokens=30000,
         text={"format": {"type": "json_object"}}, timeout=240,
     )
+    usage_ledger.record(response, "user-journeys-generator", model)
     return response.output_text
 
 
@@ -324,6 +326,7 @@ def generate_from_text(
     completion: Callable[[str, str], str] = _foundry_completion,
     source_loader: Callable[[SourceLocation, list[str], str | None], dict[str, str]] = _download,
 ) -> dict:
+    usage_ledger.begin(user_input)
     request = parse_input(user_input)
     if request["mode"] == "describe":
         sources = source_loader(request["location"], request["paths"], request["tenant"])

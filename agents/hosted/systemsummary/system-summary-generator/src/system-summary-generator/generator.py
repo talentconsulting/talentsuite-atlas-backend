@@ -7,6 +7,8 @@ import os
 import re
 from typing import Callable
 
+import usage_ledger
+
 
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 MAX_INPUT_BYTES = 2 * 1024 * 1024
@@ -94,6 +96,7 @@ def _foundry_completion(prompt: str) -> str:
         text={"format": {"type": "json_object"}},
         timeout=120,
     )
+    usage_ledger.record(response, "system-summary-generator", model)
     return response.output_text
 
 
@@ -128,6 +131,7 @@ def validate_summary(document: object, repository: str) -> dict[str, object]:
 
 
 def generate_from_text(user_input: str, completion: Callable[[str], str] = _foundry_completion) -> dict[str, object]:
+    usage_ledger.begin(user_input)
     payload = parse_input(user_input)
     raw_output = completion(source_prompt(payload))
     try:

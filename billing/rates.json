@@ -1,0 +1,9 @@
+{
+  "_note": "Prices per million tokens for each model deployment name the agents record. They start as Azure OpenAI Global Standard list prices; check https://azure.microsoft.com/pricing/details/cognitive-services/openai-service/ for your billing currency and agreement before invoicing. markup is the fraction added to cost: 0.25 charges cost plus 25%.",
+  "currency": "USD",
+  "markup": 0.0,
+  "models": {
+    "gpt-4o": { "input": 2.50, "cachedInput": 1.25, "output": 10.00 },
+    "gpt-4.1": { "input": 2.00, "cachedInput": 0.50, "output": 8.00 }
+  }
+}
