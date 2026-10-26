@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         # One run per tenant data repository. ATLAS_DATA_REPOSITORIES is a JSON array of owner/repo names.
-        repository: ${{ fromJSON(vars.ATLAS_DATA_REPOSITORIES || '["talentconsulting/talentsuite-atlas"]') }}
+        repository: ${{ fromJSON(vars.ATLAS_DATA_REPOSITORIES || '["talentconsulting/atlas-dfe"]') }}
     steps:
       - uses: actions/checkout@v4
 

@@ -1,7 +1,7 @@
 """Manifest-driven system-summary generation for the service catalogue itself.
 
 Unlike the dbschema/eventcatalog/service-dependency orchestrators, this agent never scans a target
-repository's raw source. It reads the manifest already published in the talentsuite-atlas repository,
+repository's raw source. It reads the manifest already published in the tenant's data repository,
 fetches each listed repository's already-published catalogs from that same repository, and asks
 system-summary-generator to summarize each one. The combined result is published back into the same
 repository as one file.

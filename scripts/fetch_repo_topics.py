@@ -17,7 +17,7 @@ Required environment variables:
 Optional environment variables:
     REPO_TOPICS_TOKEN   Token with metadata read access to the manifest
                         repositories, for when they are not all public.
-    MANIFEST_SOURCE_URL The tenant's manifest. Defaults to talentsuite-atlas (DfE); the
+    MANIFEST_SOURCE_URL The tenant's manifest. Defaults to atlas-dfe (DfE); the
                         workflow sets it for each repository in ATLAS_DATA_REPOSITORIES.
 """
 
