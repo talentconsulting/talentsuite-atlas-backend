@@ -6,7 +6,8 @@ month's rows, totals them per tenant and model, prices them with the rate card a
 
     invoice.csv   one line per tenant: calls, tokens, cost and the price to charge
     detail.csv    one line per tenant and model
-    summary.md    the invoice table as Markdown, also appended to the GitHub job summary
+    summary.md    the invoice table and a charge-by-tenant chart, also appended to the GitHub job summary
+    usage.html    charts of the month's usage: daily charge by tenant, charge by tenant, cost by model
 
 Cost is (uncached input x input rate + cached input x cached rate + output x output rate) per million tokens.
 Price is cost x (1 + markup). A model without a rate stops the report rather than pricing it at zero.
@@ -34,6 +35,8 @@ import urllib.parse
 import urllib.request
 from collections import defaultdict
 from typing import Any, Callable, Iterable
+
+import usage_chart
 
 TOKEN_FIELDS = ("InputTokens", "CachedInputTokens", "OutputTokens")
 
@@ -128,6 +131,26 @@ def summarise(rows: Iterable[dict[str, Any]], rates: dict[str, Any]) -> tuple[li
     return list(invoice.values()), detail
 
 
+def row_day(row: dict[str, Any]) -> int:
+    """Day of the month a row was recorded: from the table's Timestamp, else the time in its RowKey."""
+    timestamp = str(row.get("Timestamp", ""))
+    if re.match(r"\d{4}-\d{2}-\d{2}", timestamp):
+        return int(timestamp[8:10])
+    parts = str(row.get("RowKey", "")).split("|")
+    return int(parts[1][6:8]) if len(parts) > 1 and parts[1][:8].isdigit() else 1
+
+
+def daily_charges(rows: Iterable[dict[str, Any]], rates: dict[str, Any]) -> dict[tuple[int, str], float]:
+    """The charge per day and tenant. Call after summarise, which rejects models without a rate."""
+    markup = float(rates["markup"])
+    daily: dict[tuple[int, str], float] = defaultdict(float)
+    for row in rows:
+        tokens = {field: int(row.get(field, 0) or 0) for field in TOKEN_FIELDS}
+        cost = model_cost(tokens, rates["models"][str(row.get("Model", ""))])
+        daily[(row_day(row), str(row.get("Tenant", "unassigned")))] += cost * (1 + markup)
+    return dict(daily)
+
+
 def _write_csv(path: pathlib.Path, lines: list[dict[str, Any]], fields: list[str]) -> None:
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
@@ -167,7 +190,8 @@ def main() -> int:
     output = pathlib.Path(os.environ.get("OUTPUT_DIR", "billing-report"))
     try:
         rates = load_rates(pathlib.Path(os.environ.get("RATES_FILE", "billing/rates.json")))
-        invoice, detail = summarise(fetch_rows(table_sas_url, month), rates)
+        rows = fetch_rows(table_sas_url, month)
+        invoice, detail = summarise(rows, rates)
     except ReportError as error:
         print(error, file=sys.stderr)
         return 1
@@ -176,7 +200,10 @@ def main() -> int:
     totals = ["Calls", *TOKEN_FIELDS, "Cost", "Price"]
     _write_csv(output / "invoice.csv", invoice, ["Tenant", *totals])
     _write_csv(output / "detail.csv", detail, ["Tenant", "Model", *totals])
-    summary = markdown(month, str(rates.get("currency", "")), float(rates["markup"]), invoice)
+    currency, markup = str(rates.get("currency", "")), float(rates["markup"])
+    page = usage_chart.html_page(month, currency, markup, invoice, detail, daily_charges(rows, rates))
+    (output / "usage.html").write_text(page)
+    summary = markdown(month, currency, markup, invoice) + usage_chart.mermaid_chart(currency, invoice)
     (output / "summary.md").write_text(summary)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as handle:
