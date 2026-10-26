@@ -33,7 +33,7 @@ The database-schema PR creator reuses `openapi-pr-github`, because it publishes 
 
 ### Source-repository read connection
 
-Each `*-source-discovery` agent (`openapi`, `dbschema`, `eventcatalog`, `service-dependency`, `c4`, `local-dev-config`, `repo-metadata`) downloads a GitHub archive of whatever repository `sourceUrl` points at, which can be any repository the pipeline is asked to analyze -- not just the destination catalogue repository. These agents previously reused `openapi-pr-github` for `GITHUB_READ_TOKEN`, but that connection is a fine-grained PAT deliberately scoped to write access on the destination catalogue repository only. Presenting it to an unrelated source repository doesn't fail closed with a clear permissions error -- GitHub returns a plain `404` for a token with no grant on that repository, which is indistinguishable from the repository not existing, even when it's public.
+Each `*-source-discovery` agent (`openapi`, `dbschema`, `eventcatalog`, `service-dependency`, `local-dev-config`, `repo-metadata`) downloads a GitHub archive of whatever repository `sourceUrl` points at, which can be any repository the pipeline is asked to analyze -- not just the destination catalogue repository. These agents previously reused `openapi-pr-github` for `GITHUB_READ_TOKEN`, but that connection is a fine-grained PAT deliberately scoped to write access on the destination catalogue repository only. Presenting it to an unrelated source repository doesn't fail closed with a clear permissions error -- GitHub returns a plain `404` for a token with no grant on that repository, which is indistinguishable from the repository not existing, even when it's public.
 
 Create a second Foundry Custom keys project connection named `github-source-read` with a `github_token` field holding a token that can read whatever source repositories the pipeline will be pointed at:
 
@@ -85,6 +85,9 @@ The following workflows run on changes to their agent on the default branch and 
 - `.github/workflows/deploy-dbschema-generator.agent.yml`
 - `.github/workflows/deploy-dbschema-pr-creator.agent.yml`
 - `.github/workflows/deploy-dbschema-workflow.agent.yml`
+- `.github/workflows/deploy-system-summary-generator.agent.yml`
+- `.github/workflows/deploy-system-summary-pr-creator.agent.yml`
+- `.github/workflows/deploy-system-summary-manifest-orchestrator.agent.yml`
 
 The PR creator and workflow smoke tests use invalid input deliberately. This verifies the hosted Responses endpoint without writing to a repository during deployment.
 
