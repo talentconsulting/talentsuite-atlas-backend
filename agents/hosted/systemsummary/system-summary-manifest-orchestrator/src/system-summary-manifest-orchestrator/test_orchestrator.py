@@ -98,6 +98,7 @@ class RunManifestTests(unittest.TestCase):
             calls.append(name)
             if name == "generator":
                 self.assertEqual("source/app", payload["repository"])
+                self.assertEqual(BLOB.tenant, payload["tenant"])
                 return SUMMARY
             self.assertEqual("publisher", name)
             self.assertEqual("system-summaries.json", payload["targetPath"])

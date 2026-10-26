@@ -13,6 +13,7 @@ import usage_ledger
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 MAX_INPUT_BYTES = 2 * 1024 * 1024
 MAX_CAPABILITIES = 8
+INPUT_FIELDS = {"repository", "database", "events", "dependencies", "apiControllers"}
 
 
 class GenerationError(RuntimeError):
@@ -48,11 +49,16 @@ def parse_input(user_input: str) -> dict[str, object]:
         payload = json.loads(user_input.strip())
     except json.JSONDecodeError as error:
         raise GenerationError("invalid_input", "Input must be valid JSON.") from error
-    if not isinstance(payload, dict) or set(payload) != {"repository", "database", "events", "dependencies", "apiControllers"}:
+    # tenant is optional: the owner/repo data repository the run is for, recorded with its model usage.
+    if not isinstance(payload, dict) or not INPUT_FIELDS <= set(payload) <= INPUT_FIELDS | {"tenant"}:
         raise GenerationError(
             "invalid_input",
-            "Input must contain exactly repository, database, events, dependencies, and apiControllers.",
+            "Input must contain exactly repository, database, events, dependencies, and apiControllers, and an optional tenant.",
         )
+    # The tenant is for billing only, so it stays out of the prompt.
+    tenant = payload.pop("tenant", None)
+    if tenant is not None and (not isinstance(tenant, str) or not REPOSITORY_PATTERN.fullmatch(tenant)):
+        raise GenerationError("invalid_input", "tenant must use owner/repository format.")
     repository = payload["repository"]
     if not isinstance(repository, str) or not REPOSITORY_PATTERN.fullmatch(repository):
         raise GenerationError("invalid_input", "repository must use owner/repository format.")
