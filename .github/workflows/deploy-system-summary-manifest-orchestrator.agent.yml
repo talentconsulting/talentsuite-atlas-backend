@@ -1,0 +1,129 @@
+name: Deploy System Summary Manifest Orchestrator
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: system-summary-manifest-orchestrator-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-and-test:
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      AGENT_PROJECT_DIR: agents/hosted/systemsummary/system-summary-manifest-orchestrator
+      AZD_ENV_NAME: ci
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_MODEL_DEPLOYMENT_NAME || 'gpt-4o' }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'uksouth' }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'talent-day-rg' }}
+      AZURE_AI_ACCOUNT_NAME: ${{ vars.AZURE_AI_ACCOUNT_NAME || 'talent-day-foundry' }}
+      AZURE_AI_PROJECT_NAME: ${{ vars.AZURE_AI_PROJECT_NAME || 'talent-day-proj-default' }}
+      SYSTEM_SUMMARY_GENERATOR_AGENT_NAME: system-summary-generator
+      SYSTEM_SUMMARY_PR_CREATOR_AGENT_NAME: system-summary-pr-creator
+      SYSTEM_SUMMARY_MANIFEST_MAX_ENTRIES: "100"
+      SYSTEM_SUMMARY_MANIFEST_WORKFLOW_CONCURRENCY: "4"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        shell: bash
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AZURE_AI_PROJECT_ENDPOINT; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing dev environment secret $name."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - uses: Azure/setup-azd@v2
+
+      - name: Install Foundry extensions
+        working-directory: ${{ env.AGENT_PROJECT_DIR }}
+        run: |
+          azd extension install azure.ai.agents
+          azd extension install azure.ai.projects
+          azd extension install microsoft.foundry
+
+      - name: Sign in to azd with GitHub federated credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          azd auth login \
+            --client-id "$AZURE_CLIENT_ID" \
+            --federated-credential-provider "github" \
+            --tenant-id "$AZURE_TENANT_ID"
+
+      - name: Configure existing Foundry project
+        working-directory: ${{ env.AGENT_PROJECT_DIR }}
+        shell: bash
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          project_id="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.CognitiveServices/accounts/$AZURE_AI_ACCOUNT_NAME/projects/$AZURE_AI_PROJECT_NAME"
+          azd env select "$AZD_ENV_NAME" || azd env new "$AZD_ENV_NAME" --no-prompt
+          azd env set AZURE_SUBSCRIPTION_ID "$AZURE_SUBSCRIPTION_ID"
+          azd env set AZURE_TENANT_ID "$AZURE_TENANT_ID"
+          azd env set AZURE_LOCATION "$AZURE_LOCATION"
+          azd env set AZURE_RESOURCE_GROUP "$AZURE_RESOURCE_GROUP"
+          azd env set AZURE_AI_ACCOUNT_NAME "$AZURE_AI_ACCOUNT_NAME"
+          azd env set AZURE_AI_PROJECT_NAME "$AZURE_AI_PROJECT_NAME"
+          azd env set AZURE_AI_PROJECT_ID "$project_id"
+          azd env set AZURE_AI_PROJECT_ENDPOINT "$AZURE_AI_PROJECT_ENDPOINT"
+          azd env set FOUNDRY_PROJECT_ENDPOINT "$AZURE_AI_PROJECT_ENDPOINT"
+          azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "$AZURE_AI_MODEL_DEPLOYMENT_NAME"
+          azd env set SYSTEM_SUMMARY_GENERATOR_AGENT_NAME "$SYSTEM_SUMMARY_GENERATOR_AGENT_NAME"
+          azd env set SYSTEM_SUMMARY_PR_CREATOR_AGENT_NAME "$SYSTEM_SUMMARY_PR_CREATOR_AGENT_NAME"
+          azd env set SYSTEM_SUMMARY_MANIFEST_MAX_ENTRIES "$SYSTEM_SUMMARY_MANIFEST_MAX_ENTRIES"
+          azd env set SYSTEM_SUMMARY_MANIFEST_WORKFLOW_CONCURRENCY "$SYSTEM_SUMMARY_MANIFEST_WORKFLOW_CONCURRENCY"
+          azd env set USE_EXISTING_AI_PROJECT true
+          azd env set ENABLE_HOSTED_AGENTS true
+          azd env set ENABLE_CAPABILITY_HOST false
+
+      - name: Run unit tests
+        working-directory: ${{ env.AGENT_PROJECT_DIR }}
+        run: python3 -m unittest discover -s src/system-summary-manifest-orchestrator -p 'test_*.py'
+
+      - name: Deploy System Summary Manifest Orchestrator
+        working-directory: ${{ env.AGENT_PROJECT_DIR }}
+        run: azd deploy system-summary-manifest-orchestrator --no-prompt
+
+      - name: Clear cached subscription ID before agent commands
+        working-directory: ${{ env.AGENT_PROJECT_DIR }}
+        shell: bash
+        # azd deploy needs AZURE_SUBSCRIPTION_ID, but leaving it set breaks azd ai agent
+        # show/invoke below: they resolve their token via `azd auth token`, whose tenant
+        # lookup for a discoverable subscription ID has no service-principal fast path
+        # and fails for this identity. `azd env set VAR ""` isn't enough -- azd loads
+        # every key in .env into its own process env at startup, so an empty value still
+        # counts as "found". Delete the key outright so the lookup skips cleanly and
+        # falls back to the tenant already established by azd auth login.
+        run: sed -i '/^AZURE_SUBSCRIPTION_ID=/d' ".azure/$AZD_ENV_NAME/.env"
+
+      - name: Verify deployed agent
+        working-directory: ${{ env.AGENT_PROJECT_DIR }}
+        run: azd ai agent show system-summary-manifest-orchestrator --output json --no-prompt
+
+      - name: Smoke test validation without reading GitHub
+        working-directory: ${{ env.AGENT_PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          response_file="$RUNNER_TEMP/system-summary-manifest-orchestrator-response.txt"
+          azd ai agent invoke system-summary-manifest-orchestrator '{}' > "$response_file" 2>&1
+          cat "$response_file"
+          grep -q '"success":false' "$response_file"
+          grep -q '"invalid_input"' "$response_file"
