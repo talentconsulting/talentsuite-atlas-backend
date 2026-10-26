@@ -6,29 +6,7 @@ This repository contains Azure AI Foundry hosted agents for manifest-driven sour
 
 Every pipeline in this repository follows the same shape: an orchestrator fetches the manifest from `talentsuite-atlas`, then for each manifest entry a discovery agent retrieves the relevant files from the repository being analyzed and a generator agent turns them into structured artifacts, looping until every entry has been processed. Once the loop completes, one PR-creator agent commits every generated artifact back into `talentsuite-atlas` in a single pull request.
 
-```mermaid
-flowchart TD
-    orchestrator[Orchestrator] -->|FetchManifest| manifestRepo[(talentsuite-atlas)]
-    orchestrator --> loop
-
-    subgraph workflow[Workflow]
-        direction TB
-        loop[Foreach manifest entry]
-        retrieve["Retrieve files for processing (Agent)"]
-        create["Create artifacts (Agent)"]
-        more{More entries?}
-
-        loop --> retrieve
-        retrieve -->|JSON| create
-        create -->|JSON| more
-        more -->|yes| loop
-    end
-
-    retrieve --> targetRepo[(Repository to act on)]
-    create --> targetRepo
-    more -->|no| createPR["Create PR (Agent)"]
-    createPR --> manifestRepo
-```
+![Every pipeline: the manifest orchestrator reads the manifest from talentsuite-atlas and runs the workflow once per changed entry. The workflow retrieves files, then creates artefacts, reading the repository being analysed. When no entries remain, the PR creator opens one pull request on talentsuite-atlas.](docs/diagrams/pipeline-pattern.svg)
 
 ## Pipeline
 
@@ -40,48 +18,9 @@ flowchart TD
 
 ### Agent interactions and dependencies
 
-```mermaid
-flowchart TD
-    caller[Caller]
-    source[(Source GitHub repositories)]
-    target[(Target GitHub repository)]
+![OpenAPI flow agents: the orchestrator reads the manifest and branch heads, calls the workflow once per changed repository and sends everything to the PR creator; the workflow calls source discovery and the generator, which read the source repositories; the PR creator opens a pull request on talentsuite-atlas.](docs/diagrams/pipeline-agents.svg)
 
-    subgraph foundry[Microsoft Foundry hosted agents]
-        manifest[openapi-manifest-orchestrator]
-        workflow[openapi-spec-workflow]
-        discovery[openapi-source-discovery]
-        generator[openapi-spec-generator]
-        publisher[openapi-spec-pr-creator]
-        dbManifest[dbschema-manifest-orchestrator]
-        dbWorkflow[dbschema-workflow]
-        dbGenerator[dbschema-generator]
-        dbPublisher[dbschema-pr-creator]
-    end
-
-    caller -->|Manifest URL| manifest
-    caller -->|Source URL and target repository| workflow
-
-    manifest -->|Read manifest and branch heads| source
-    manifest -->|One deferred call per changed repository| workflow
-
-    workflow -->|Discover API and DTO files| discovery
-    discovery -->|Download repository archive| source
-    workflow -->|One call per discovered API| generator
-    generator -->|Read API and supporting files| source
-
-    workflow -->|Direct run: publish generated specs| publisher
-    manifest -->|Manifest run: publish combined specs and manifest| publisher
-    publisher -->|Create branch, commit files, and open PR| target
-
-    caller -->|Database-schema manifest URL| dbManifest
-    dbManifest -->|Read manifest and branch heads| source
-    dbManifest -->|One deferred call per changed repository| dbWorkflow
-    dbWorkflow -->|Generate one database representation| dbGenerator
-    dbGenerator -->|Download bounded repository source| source
-    dbWorkflow -->|Direct run: publish schema| dbPublisher
-    dbManifest -->|Publish combined schemas and manifest| dbPublisher
-    dbPublisher -->|Create branch, commit files, and open PR| target
-```
+Every other flow has the same five agents with its own prefix, for example `dbschema-manifest-orchestrator`, `dbschema-workflow`, `dbschema-source-discovery`, `dbschema-generator` and `dbschema-pr-creator`. A workflow can also be called directly with a source URL and a target repository. It then calls its PR creator itself instead of returning results to the orchestrator.
 
 The dependency order is:
 
