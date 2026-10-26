@@ -10,6 +10,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Callable
 
+import github_app
 
 MAX_SUPPORTING_FILES = 50
 MAX_FILE_BYTES = 512 * 1024
@@ -68,11 +69,17 @@ def parse_input(user_input: str) -> dict[str, object]:
         payload = json.loads(user_input.strip())
     except json.JSONDecodeError as error:
         raise GenerationError("invalid_input", "Input must be valid JSON.") from error
-    if not isinstance(payload, dict) or set(payload) != {"apiFile", "supportingFiles"}:
+    # tenant is optional: the owner/repo data repository the source-file read token is minted for.
+    if not isinstance(payload, dict) or not (
+        {"apiFile", "supportingFiles"} <= set(payload) <= {"apiFile", "supportingFiles", "tenant"}
+    ):
         raise GenerationError(
             "invalid_input",
-            'Input must contain exactly "apiFile" and "supportingFiles".',
+            'Input must contain exactly "apiFile", "supportingFiles" and an optional "tenant".',
         )
+    tenant = payload.get("tenant")
+    if tenant is not None and (not isinstance(tenant, str) or not tenant.strip()):
+        raise GenerationError("invalid_input", "tenant must be an owner/repo string.")
     if not isinstance(payload["apiFile"], str) or not payload["apiFile"].strip():
         raise GenerationError("invalid_input", "apiFile must be a non-empty string.")
     supporting = payload["supportingFiles"]
@@ -88,6 +95,7 @@ def parse_input(user_input: str) -> dict[str, object]:
     return {
         "apiFile": payload["apiFile"].strip(),
         "supportingFiles": [item.strip() for item in supporting],
+        "tenant": tenant,
     }
 
 
@@ -130,18 +138,20 @@ def parse_github_blob_url(url: str) -> GitHubFile:
     )
 
 
-def _download_source(source: GitHubFile) -> str:
-    raw_url = (
-        "https://raw.githubusercontent.com/"
-        f"{urllib.parse.quote(source.owner, safe='')}/"
-        f"{urllib.parse.quote(source.repository, safe='')}/"
-        f"{urllib.parse.quote(source.ref, safe='')}/"
-        f"{urllib.parse.quote(source.path, safe='/')}"
-    )
-    request = urllib.request.Request(
-        raw_url,
-        headers={"User-Agent": "openapi-spec-generator"},
-    )
+def _download_source(source: GitHubFile, tenant: str | None = None) -> str:
+    owner = urllib.parse.quote(source.owner, safe="")
+    repository = urllib.parse.quote(source.repository, safe="")
+    ref = urllib.parse.quote(source.ref, safe="")
+    path = urllib.parse.quote(source.path, safe="/")
+    url = f"https://raw.githubusercontent.com/{owner}/{repository}/{ref}/{path}"
+    headers = {"User-Agent": "openapi-spec-generator"}
+    token = github_app.read_token(tenant)
+    if token:
+        # The contents API accepts App installation tokens; raw.githubusercontent.com is for anonymous reads.
+        url = f"https://api.github.com/repos/{owner}/{repository}/contents/{path}?ref={ref}"
+        headers["Authorization"] = f"Bearer {token}"
+        headers["Accept"] = "application/vnd.github.raw"
+    request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             declared_size = int(response.headers.get("Content-Length", "0") or "0")
@@ -173,7 +183,7 @@ def _download_source(source: GitHubFile) -> str:
 
 def load_sources(
     payload: dict[str, object],
-    fetcher: Callable[[GitHubFile], str] = _download_source,
+    fetcher: Callable[[GitHubFile, str | None], str] = _download_source,
 ) -> SourceBundle:
     api = parse_github_blob_url(str(payload["apiFile"]))
     supporting_urls = list(dict.fromkeys(payload["supportingFiles"]))
@@ -194,9 +204,10 @@ def load_sources(
                 "apiFile must not also appear in supportingFiles.",
             )
 
-    loaded_api = SourceFile(api.url, api.path, fetcher(api))
+    tenant = payload.get("tenant")
+    loaded_api = SourceFile(api.url, api.path, fetcher(api, tenant))
     loaded_supporting = tuple(
-        SourceFile(source.url, source.path, fetcher(source)) for source in supporting
+        SourceFile(source.url, source.path, fetcher(source, tenant)) for source in supporting
     )
     total_bytes = len(loaded_api.content.encode("utf-8")) + sum(
         len(source.content.encode("utf-8")) for source in loaded_supporting
@@ -311,7 +322,7 @@ def validate_openapi(document: object) -> dict[str, object]:
 def generate_from_text(
     user_input: str,
     completion: Callable[[str], str] = _foundry_completion,
-    fetcher: Callable[[GitHubFile], str] = _download_source,
+    fetcher: Callable[[GitHubFile, str | None], str] = _download_source,
 ) -> dict[str, object]:
     payload = parse_input(user_input)
     bundle = load_sources(payload, fetcher=fetcher)

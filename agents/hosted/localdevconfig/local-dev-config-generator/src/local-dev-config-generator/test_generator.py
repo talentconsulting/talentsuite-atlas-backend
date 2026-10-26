@@ -1,6 +1,8 @@
 import json
 import unittest
+from unittest import mock
 
+import generator
 from generator import (
     GenerationError,
     generate_from_text,
@@ -220,7 +222,7 @@ class GenerateFromTextTests(unittest.TestCase):
             prompts.append(prompt)
             return json.dumps(CATALOG)
 
-        def source_loader(location, source_files):
+        def source_loader(location, source_files, tenant=None):
             self.assertEqual([FILE_COMPOSE, FILE_SETTINGS], source_files)
             return {
                 "src/docker-compose.yml": "services:\n  redis:\n    image: redis",
@@ -242,8 +244,67 @@ class GenerateFromTextTests(unittest.TestCase):
             generate_from_text(
                 json.dumps({"sourceUrl": SOURCE_URL, "sourceFiles": [FILE_COMPOSE]}),
                 completion=lambda prompt: "not-json",
-                source_loader=lambda location, source_files: {"src/docker-compose.yml": "services: {}"},
+                source_loader=lambda location, source_files, tenant=None: {"src/docker-compose.yml": "services: {}"},
             )
+
+
+class TenantTests(unittest.TestCase):
+    def test_accepts_an_optional_tenant(self):
+        payload = parse_input(json.dumps({"sourceUrl": SOURCE_URL, "sourceFiles": [FILE_COMPOSE], "tenant": "tenant/atlas"}))
+        self.assertEqual("tenant/atlas", payload["tenant"])
+        self.assertIsNone(parse_input(json.dumps({"sourceUrl": SOURCE_URL, "sourceFiles": [FILE_COMPOSE]}))["tenant"])
+
+    def test_rejects_a_tenant_that_is_not_a_non_empty_string(self):
+        for tenant in (1, "", "  "):
+            with self.subTest(tenant=tenant), self.assertRaisesRegex(GenerationError, "tenant"):
+                parse_input(json.dumps({"sourceUrl": SOURCE_URL, "sourceFiles": [FILE_COMPOSE], "tenant": tenant}))
+
+    def test_generate_passes_the_tenant_to_the_source_loader(self):
+        seen = []
+
+        def source_loader(location, source_files, tenant=None):
+            seen.append(tenant)
+            return {"src/appsettings.json": "{}"}
+
+        generate_from_text(
+            json.dumps({"sourceUrl": SOURCE_URL, "sourceFiles": [FILE_SETTINGS], "tenant": "tenant/atlas"}),
+            completion=lambda prompt: json.dumps({
+                "repository": "source/catalog", "ref": "main", "path": "src", "localServices": [], "configurationKeys": [],
+            }),
+            source_loader=source_loader,
+        )
+        self.assertEqual(["tenant/atlas"], seen)
+
+
+class SourceDownloadTests(unittest.TestCase):
+    def download(self, token):
+        requests = []
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self, size): return b"services: {}"
+
+        def urlopen(request, timeout):
+            requests.append(request)
+            return Response()
+
+        with mock.patch.object(generator.github_app, "read_token", return_value=token) as read_token, \
+                mock.patch.object(generator.urllib.request, "urlopen", side_effect=urlopen):
+            generator._download_selected_sources(parse_source_url(SOURCE_URL), [FILE_COMPOSE], "tenant/atlas")
+        read_token.assert_called_once_with("tenant/atlas")
+        return requests[0]
+
+    def test_the_tenants_token_reads_through_the_contents_api(self):
+        request = self.download("installation-token")
+        self.assertEqual("https://api.github.com/repos/source/catalog/contents/src/docker-compose.yml?ref=main", request.full_url)
+        self.assertEqual("Bearer installation-token", request.get_header("Authorization"))
+        self.assertEqual("application/vnd.github.raw", request.get_header("Accept"))
+
+    def test_without_a_token_the_raw_file_is_read(self):
+        request = self.download(None)
+        self.assertEqual("https://raw.githubusercontent.com/source/catalog/main/src/docker-compose.yml", request.full_url)
+        self.assertIsNone(request.get_header("Authorization"))
 
 
 if __name__ == "__main__":

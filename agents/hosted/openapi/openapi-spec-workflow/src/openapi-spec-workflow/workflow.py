@@ -75,7 +75,7 @@ def parse_workflow_request(input_text: str) -> dict[str, Any]:
         "pullRequestBody",
         "deferPublication",
         "apiFiles",
-        # The tenant's owner/repo data repository; discovery mints its GitHub read token for that tenant.
+        # The tenant's owner/repo data repository; discovery and the generator mint their GitHub read tokens for it.
         "tenant",
     }
     if not set(payload).issubset(allowed):
@@ -247,8 +247,10 @@ def run_workflow(
     generated: list[dict[str, Any] | None] = [None] * len(api_files)
     generation_errors: list[dict[str, str]] = []
 
+    tenant = request.get("tenant")
+
     def generate(index: int, item: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        specification = invoker(project, generator_name, model, item)
+        specification = invoker(project, generator_name, model, {**item, **({"tenant": tenant} if tenant else {})})
         return index, validate_specification(specification)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(max_concurrency, 8))) as executor:

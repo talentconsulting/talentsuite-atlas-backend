@@ -411,7 +411,7 @@ class MergeEntityTablesTests(unittest.TestCase):
 
 
 class TenantTests(unittest.TestCase):
-    def test_tenant_is_passed_to_discovery_only(self):
+    def run_with(self, request):
         calls = []
 
         def invoke(project, name, model, payload, max_attempts=2):
@@ -420,12 +420,18 @@ class TenantTests(unittest.TestCase):
                 return {"schemaFiles": [FILE], "excludedFiles": []}
             return SCHEMA
 
-        run_workflow(
-            object(), {"sourceUrl": SOURCE, "deferPublication": True, "tenant": "tenant/atlas"},
-            "discovery", "generator", "publisher", "gpt-4o", invoker=invoke,
-        )
+        run_workflow(object(), request, "discovery", "generator", "publisher", "gpt-4o", invoker=invoke)
+        return calls
+
+    def test_tenant_is_passed_to_discovery_and_the_generator(self):
+        calls = self.run_with({"sourceUrl": SOURCE, "deferPublication": True, "tenant": "tenant/atlas"})
         self.assertEqual({"sourceUrl": SOURCE, "tenant": "tenant/atlas"}, calls[0][1])
-        self.assertNotIn("tenant", calls[1][1])
+        self.assertEqual({"sourceUrl": SOURCE, "sourceFiles": [FILE], "tenant": "tenant/atlas"}, calls[1][1])
+
+    def test_without_a_tenant_neither_payload_carries_one(self):
+        calls = self.run_with({"sourceUrl": SOURCE, "deferPublication": True})
+        self.assertEqual({"sourceUrl": SOURCE}, calls[0][1])
+        self.assertEqual({"sourceUrl": SOURCE, "sourceFiles": [FILE]}, calls[1][1])
 
 
 if __name__ == "__main__":

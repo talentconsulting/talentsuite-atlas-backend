@@ -25,6 +25,10 @@ services:
     environmentVariables:
       - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
         value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+      - name: GITHUB_APP_ID
+        value: ${{connections.atlas-github-app.credentials.app_id}}
+      - name: GITHUB_APP_PRIVATE_KEY
+        value: ${{connections.atlas-github-app.credentials.private_key}}
     kind: hosted
     name: local-dev-config-generator
     displayName: Local Dev Config Generator

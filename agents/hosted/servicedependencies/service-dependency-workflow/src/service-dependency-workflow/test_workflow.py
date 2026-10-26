@@ -309,7 +309,7 @@ class WorkflowTests(unittest.TestCase):
 
 
 class TenantTests(unittest.TestCase):
-    def test_tenant_is_passed_to_discovery_only(self):
+    def invoke_workflow(self, **request):
         calls = []
 
         def invoke(project, name, model, payload, max_attempts=2):
@@ -319,11 +319,20 @@ class TenantTests(unittest.TestCase):
             return catalog([dependency()])
 
         run_workflow(
-            object(), {"sourceUrl": SOURCE, "deferPublication": True, "tenant": "tenant/atlas"},
+            object(), {"sourceUrl": SOURCE, "deferPublication": True, **request},
             "discovery", "generator", "publisher", "gpt-4o", invoker=invoke,
         )
+        return calls
+
+    def test_tenant_is_passed_to_discovery_and_the_generator(self):
+        calls = self.invoke_workflow(tenant="tenant/atlas")
         self.assertEqual({"sourceUrl": SOURCE, "tenant": "tenant/atlas"}, calls[0][1])
-        self.assertNotIn("tenant", calls[1][1])
+        self.assertEqual({"sourceUrl": SOURCE, "sourceFiles": FILES[:1], "tenant": "tenant/atlas"}, calls[1][1])
+
+    def test_without_a_tenant_no_tenant_is_sent(self):
+        calls = self.invoke_workflow()
+        self.assertEqual({"sourceUrl": SOURCE}, calls[0][1])
+        self.assertEqual({"sourceUrl": SOURCE, "sourceFiles": FILES[:1]}, calls[1][1])
 
 
 class CatalogToPumlTests(unittest.TestCase):

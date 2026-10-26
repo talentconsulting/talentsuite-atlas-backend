@@ -220,7 +220,7 @@ class WorkflowTests(unittest.TestCase):
 
 
 class TenantTests(unittest.TestCase):
-    def test_tenant_is_passed_to_discovery_only(self):
+    def test_tenant_is_passed_to_discovery_and_the_generator(self):
         calls = []
 
         def invoke(project, name, model, payload, max_attempts=2):
@@ -234,7 +234,38 @@ class TenantTests(unittest.TestCase):
             "discovery", "generator", "publisher", "gpt-4o", invoker=invoke,
         )
         self.assertEqual({"sourceUrl": SOURCE, "tenant": "tenant/atlas"}, calls[0][1])
-        self.assertNotIn("tenant", calls[1][1])
+        self.assertEqual(("generator", {"apiFile": API_1, "supportingFiles": [], "tenant": "tenant/atlas"}), calls[1])
+
+    def test_tenant_is_passed_to_the_generator_for_supplied_apifiles(self):
+        calls = []
+
+        def invoke(project, name, model, payload, max_attempts=2):
+            calls.append((name, payload))
+            return dict(SPEC)
+
+        run_workflow(
+            object(),
+            {"sourceUrl": SOURCE, "deferPublication": True, "tenant": "tenant/atlas",
+             "apiFiles": [{"apiFile": API_1, "supportingFiles": [DTO]}]},
+            "discovery", "generator", "publisher", "gpt-4o", invoker=invoke,
+        )
+        self.assertEqual([("generator", {"apiFile": API_1, "supportingFiles": [DTO], "tenant": "tenant/atlas"})], calls)
+
+    def test_without_a_tenant_the_generator_payload_has_no_tenant(self):
+        calls = []
+
+        def invoke(project, name, model, payload, max_attempts=2):
+            calls.append((name, payload))
+            if name == "discovery":
+                return [{"apiFile": API_1, "supportingFiles": []}]
+            return dict(SPEC)
+
+        run_workflow(
+            object(), {"sourceUrl": SOURCE, "deferPublication": True},
+            "discovery", "generator", "publisher", "gpt-4o", invoker=invoke,
+        )
+        self.assertEqual({"sourceUrl": SOURCE}, calls[0][1])
+        self.assertEqual(("generator", {"apiFile": API_1, "supportingFiles": []}), calls[1])
 
     def test_tenant_must_be_a_non_empty_string(self):
         with self.assertRaisesRegex(WorkflowError, "tenant"):

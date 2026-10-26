@@ -10,6 +10,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Callable
 
+import github_app
+
 
 MAX_SOURCE_FILES = 100
 MAX_FILE_BYTES = 512 * 1024
@@ -132,8 +134,12 @@ def parse_input(user_input: str) -> dict[str, object]:
         payload = json.loads(user_input.strip())
     except json.JSONDecodeError as error:
         raise GenerationError("invalid_input", "Input must be valid JSON.") from error
-    if not isinstance(payload, dict) or set(payload) != {"sourceUrl", "sourceFiles"}:
-        raise GenerationError("invalid_input", "Input must contain exactly sourceUrl and sourceFiles.")
+    # tenant is optional: the owner/repo data repository the source-file read token is minted for.
+    if not isinstance(payload, dict) or not {"sourceUrl", "sourceFiles"} <= set(payload) <= {"sourceUrl", "sourceFiles", "tenant"}:
+        raise GenerationError("invalid_input", "Input must contain exactly sourceUrl, sourceFiles and an optional tenant.")
+    tenant = payload.get("tenant")
+    if tenant is not None and (not isinstance(tenant, str) or not tenant.strip()):
+        raise GenerationError("invalid_input", "tenant must be an owner/repo string.")
     location = parse_source_url(payload["sourceUrl"])
     source_files = payload["sourceFiles"]
     if not isinstance(source_files, list) or not source_files or len(source_files) > MAX_SOURCE_FILES:
@@ -141,12 +147,13 @@ def parse_input(user_input: str) -> dict[str, object]:
     validated = [_validate_blob_url(value, location) for value in source_files]
     if len(validated) != len(set(validated)):
         raise GenerationError("invalid_input", "sourceFiles must not contain duplicates.")
-    return {"sourceUrl": str(payload["sourceUrl"]).strip(), "sourceFiles": validated}
+    return {"sourceUrl": str(payload["sourceUrl"]).strip(), "sourceFiles": validated, "tenant": tenant}
 
 
-def _download_selected_sources(location: SourceLocation, source_files: list[str]) -> dict[str, str]:
+def _download_selected_sources(location: SourceLocation, source_files: list[str], tenant: str | None = None) -> dict[str, str]:
     sources: dict[str, str] = {}
     total_bytes = 0
+    token = github_app.read_token(tenant)
     for blob_url in source_files:
         parts = [urllib.parse.unquote(part) for part in urllib.parse.urlparse(blob_url).path.split("/") if part]
         path = "/".join(parts[4:])
@@ -155,7 +162,17 @@ def _download_selected_sources(location: SourceLocation, source_files: list[str]
             f"{urllib.parse.quote(location.repository, safe='')}/{urllib.parse.quote(location.ref, safe='')}/"
             f"{urllib.parse.quote(path, safe='/')}"
         )
-        request = urllib.request.Request(raw_url, headers={"User-Agent": "local-dev-config-generator"})
+        headers = {"User-Agent": "local-dev-config-generator"}
+        if token:
+            # The contents API accepts App installation tokens; raw.githubusercontent.com is for anonymous reads.
+            raw_url = (
+                f"https://api.github.com/repos/{urllib.parse.quote(location.owner, safe='')}/"
+                f"{urllib.parse.quote(location.repository, safe='')}/contents/{urllib.parse.quote(path, safe='/')}"
+                f"?ref={urllib.parse.quote(location.ref, safe='')}"
+            )
+            headers["Authorization"] = f"Bearer {token}"
+            headers["Accept"] = "application/vnd.github.raw"
+        request = urllib.request.Request(raw_url, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 content = response.read(MAX_FILE_BYTES + 1)
@@ -320,11 +337,11 @@ def validate_catalog(
 def generate_from_text(
     user_input: str,
     completion: Callable[[str], str] = _foundry_completion,
-    source_loader: Callable[[SourceLocation, list[str]], dict[str, str]] = _download_selected_sources,
+    source_loader: Callable[[SourceLocation, list[str], str | None], dict[str, str]] = _download_selected_sources,
 ) -> dict[str, object]:
     payload = parse_input(user_input)
     location = parse_source_url(payload["sourceUrl"])
-    sources = source_loader(location, payload["sourceFiles"])
+    sources = source_loader(location, payload["sourceFiles"], payload["tenant"])
     raw_output = completion(source_prompt(location, sources))
     try:
         document = json.loads(raw_output)

@@ -65,7 +65,7 @@ def parse_workflow_request(input_text: str) -> dict[str, Any]:
     allowed = {
         "sourceUrl", "targetRepository", "targetDirectory", "targetBaseBranch",
         "branchName", "pullRequestTitle", "pullRequestBody", "deferPublication",
-        # The tenant's owner/repo data repository; discovery mints its GitHub read token for that tenant.
+        # The tenant's owner/repo data repository; discovery and the generator mint their GitHub read tokens for it.
         "tenant",
     }
     if not set(payload).issubset(allowed):
@@ -286,6 +286,7 @@ def _generate_batch(
     invoker: Callable[..., Any],
     max_attempts: int = 3,
     retry_delay_seconds: float = 5.0,
+    tenant: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Returns the batch's catalogs and any files skipped as too large for the model.
 
@@ -293,13 +294,14 @@ def _generate_batch(
     since it would overflow again). A single file that still overflows is skipped with a warning rather
     than failing the whole repository; such files are generated or vendored code, not message declarations.
     """
+    payload = {"sourceUrl": source_url, "sourceFiles": batch, **({"tenant": tenant} if tenant else {})}
     last_error: Exception | None = None
     for attempt in range(max(1, max_attempts)):
         if attempt:
             # Back off before retrying so concurrent batches do not hammer a throttled model deployment.
             time.sleep(retry_delay_seconds * 2 ** (attempt - 1))
         try:
-            return [validate_catalog(invoker(project, generator_name, model, {"sourceUrl": source_url, "sourceFiles": batch}, max_attempts=1))], []
+            return [validate_catalog(invoker(project, generator_name, model, payload, max_attempts=1))], []
         except Exception as error:
             if _is_context_overflow(error):
                 break
@@ -314,7 +316,7 @@ def _generate_batch(
     skipped: list[dict[str, Any]] = []
     for half in (batch[:middle], batch[middle:]):
         half_catalogs, half_skipped = _generate_batch(
-            project, generator_name, model, source_url, half, invoker, max_attempts, retry_delay_seconds,
+            project, generator_name, model, source_url, half, invoker, max_attempts, retry_delay_seconds, tenant,
         )
         catalogs.extend(half_catalogs)
         skipped.extend(half_skipped)
@@ -369,7 +371,7 @@ def run_workflow(
                 futures = [
                     executor.submit(
                         _generate_batch, project, generator_name, model, source_url, batch, invoker,
-                        retry_delay_seconds=retry_delay_seconds,
+                        retry_delay_seconds=retry_delay_seconds, tenant=request.get("tenant"),
                     )
                     for batch in batches
                 ]

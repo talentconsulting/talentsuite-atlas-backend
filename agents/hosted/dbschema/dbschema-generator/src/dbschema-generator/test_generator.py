@@ -1,6 +1,8 @@
 import json
 import unittest
+from unittest import mock
 
+import generator
 from generator import (
     GenerationError,
     _is_database_source,
@@ -194,6 +196,94 @@ class SchemaTests(unittest.TestCase):
                 completion=lambda prompt: "not-json",
                 source_loader=lambda location: {"schema.sql": "CREATE TABLE orders(id uuid);"},
             )
+
+
+FILE_URL = "https://github.com/source/catalog/blob/main/src/Data/Orders.cs"
+
+
+class TenantTests(unittest.TestCase):
+    def test_accepts_an_optional_tenant(self):
+        payload = parse_input(json.dumps({"sourceUrl": SOURCE_URL, "sourceFiles": [FILE_URL], "tenant": "tenant/atlas"}))
+
+        self.assertEqual("tenant/atlas", payload["tenant"])
+
+    def test_rejects_a_tenant_that_is_not_a_non_empty_string(self):
+        for tenant in (1, "", "  "):
+            with self.assertRaisesRegex(GenerationError, "tenant"):
+                parse_input(json.dumps({"sourceUrl": SOURCE_URL, "tenant": tenant}))
+
+    def test_passes_the_tenant_to_the_selected_source_download(self):
+        with mock.patch.object(generator, "_download_selected_sources", return_value={"schema.sql": "CREATE TABLE orders(id uuid);"}) as download:
+            generate_from_text(
+                json.dumps({"sourceUrl": SOURCE_URL, "sourceFiles": [FILE_URL], "tenant": "tenant/atlas"}),
+                completion=lambda prompt: json.dumps(SCHEMA),
+            )
+
+        download.assert_called_once_with(parse_source_url(SOURCE_URL), [FILE_URL], "tenant/atlas")
+
+
+class SourceDownloadTests(unittest.TestCase):
+    def download(self, token):
+        requests = []
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self, size): return b"public class Orders {}"
+
+        def urlopen(request, timeout):
+            requests.append(request)
+            return Response()
+
+        with mock.patch.object(generator.github_app, "read_token", return_value=token) as read_token, \
+                mock.patch.object(generator.urllib.request, "urlopen", side_effect=urlopen):
+            generator._download_selected_sources(parse_source_url(SOURCE_URL), [FILE_URL], "tenant/atlas")
+        read_token.assert_called_once_with("tenant/atlas")
+        return requests[0]
+
+    def test_the_tenants_token_reads_through_the_contents_api(self):
+        request = self.download("installation-token")
+        self.assertEqual("https://api.github.com/repos/source/catalog/contents/src/Data/Orders.cs?ref=main", request.full_url)
+        self.assertEqual("Bearer installation-token", request.get_header("Authorization"))
+        self.assertEqual("application/vnd.github.raw", request.get_header("Accept"))
+
+    def test_without_a_token_the_raw_file_is_read(self):
+        request = self.download(None)
+        self.assertEqual("https://raw.githubusercontent.com/source/catalog/main/src/Data/Orders.cs", request.full_url)
+        self.assertIsNone(request.get_header("Authorization"))
+
+
+
+class ArchiveDownloadTests(unittest.TestCase):
+    def download(self, token):
+        requests = []
+
+        class Response:
+            headers = {}
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self, size): raise generator.GenerationError("stop", "stop after the request")
+
+        def urlopen(request, timeout):
+            requests.append(request)
+            return Response()
+
+        with mock.patch.object(generator.github_app, "read_token", return_value=token) as read_token, \
+                mock.patch.object(generator.urllib.request, "urlopen", side_effect=urlopen):
+            with self.assertRaises(generator.GenerationError):
+                generator._download_sources(generator.parse_source_url("https://github.com/source/app/tree/main/src"), "tenant/atlas")
+        read_token.assert_called_once_with("tenant/atlas")
+        return requests[0]
+
+    def test_the_tenants_token_downloads_the_archive_through_the_api(self):
+        request = self.download("installation-token")
+        self.assertEqual("https://api.github.com/repos/source/app/zipball/main", request.full_url)
+        self.assertEqual("Bearer installation-token", request.get_header("Authorization"))
+
+    def test_without_a_token_the_public_archive_is_downloaded(self):
+        request = self.download(None)
+        self.assertEqual("https://codeload.github.com/source/app/zip/main", request.full_url)
+        self.assertIsNone(request.get_header("Authorization"))
 
 
 if __name__ == "__main__":
