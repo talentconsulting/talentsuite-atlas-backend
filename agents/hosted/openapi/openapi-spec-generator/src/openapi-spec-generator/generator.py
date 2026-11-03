@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -16,6 +17,9 @@ import usage_ledger
 MAX_SUPPORTING_FILES = 50
 MAX_FILE_BYTES = 512 * 1024
 MAX_TOTAL_BYTES = 2 * 1024 * 1024
+MAX_DOWNLOAD_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 2
+RETRYABLE_STATUSES = {500, 502, 503, 504}
 
 
 class GenerationError(RuntimeError):
@@ -153,24 +157,30 @@ def _download_source(source: GitHubFile, tenant: str | None = None) -> str:
         headers["Authorization"] = f"Bearer {token}"
         headers["Accept"] = "application/vnd.github.raw"
     request = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            declared_size = int(response.headers.get("Content-Length", "0") or "0")
-            if declared_size > MAX_FILE_BYTES:
-                raise GenerationError("source_too_large", f"Source file is too large: {source.path}")
-            content = response.read(MAX_FILE_BYTES + 1)
-    except GenerationError:
-        raise
-    except urllib.error.HTTPError as error:
-        raise GenerationError(
-            "source_unavailable",
-            f"GitHub returned HTTP {error.code} for {source.path}.",
-        ) from error
-    except urllib.error.URLError as error:
-        raise GenerationError(
-            "source_unavailable",
-            f"Unable to download {source.path} from GitHub.",
-        ) from error
+    # GitHub's 5xx responses and dropped connections are usually transient, so retry them briefly.
+    for attempt in range(1, MAX_DOWNLOAD_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                declared_size = int(response.headers.get("Content-Length", "0") or "0")
+                if declared_size > MAX_FILE_BYTES:
+                    raise GenerationError("source_too_large", f"Source file is too large: {source.path}")
+                content = response.read(MAX_FILE_BYTES + 1)
+            break
+        except GenerationError:
+            raise
+        except urllib.error.HTTPError as error:
+            if attempt == MAX_DOWNLOAD_ATTEMPTS or error.code not in RETRYABLE_STATUSES:
+                raise GenerationError(
+                    "source_unavailable",
+                    f"GitHub returned HTTP {error.code} for {source.path}.",
+                ) from error
+        except urllib.error.URLError as error:
+            if attempt == MAX_DOWNLOAD_ATTEMPTS:
+                raise GenerationError(
+                    "source_unavailable",
+                    f"Unable to download {source.path} from GitHub.",
+                ) from error
+        time.sleep(RETRY_DELAY_SECONDS * attempt)
     if len(content) > MAX_FILE_BYTES:
         raise GenerationError("source_too_large", f"Source file is too large: {source.path}")
     try:

@@ -171,3 +171,52 @@ class WriteTokenTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GitHubClientRetryTests(unittest.TestCase):
+    def send(self, method, path, codes):
+        import io
+        import urllib.error
+
+        import github_pr
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        calls = []
+
+        def urlopen(request, timeout):
+            calls.append(request)
+            if len(calls) <= len(codes):
+                raise urllib.error.HTTPError(request.full_url, codes[len(calls) - 1], "error", {}, None)
+            return Response(b'{"sha": "abc"}')
+
+        with patch("github_pr.urllib.request.urlopen", side_effect=urlopen), patch("github_pr.time.sleep"):
+            try:
+                return github_pr.GitHubClient("token").request(method, path, {}), len(calls)
+            except PublicationError as error:
+                return error, len(calls)
+
+    def test_retries_a_transient_error_when_creating_a_blob(self):
+        result, calls = self.send("POST", "/repos/target/specs/git/blobs", [502])
+        self.assertEqual({"sha": "abc"}, result)
+        self.assertEqual(2, calls)
+
+    def test_gives_up_after_three_attempts(self):
+        error, calls = self.send("GET", "/repos/target/specs", [502, 502, 502])
+        self.assertEqual("github_api_error", error.code)
+        self.assertEqual(3, calls)
+
+    def test_does_not_repeat_creating_a_branch(self):
+        error, calls = self.send("POST", "/repos/target/specs/git/refs", [502])
+        self.assertEqual("github_api_error", error.code)
+        self.assertEqual(1, calls)
+
+    def test_does_not_retry_a_client_error(self):
+        error, calls = self.send("POST", "/repos/target/specs/git/blobs", [422])
+        self.assertEqual("github_api_error", error.code)
+        self.assertEqual(1, calls)

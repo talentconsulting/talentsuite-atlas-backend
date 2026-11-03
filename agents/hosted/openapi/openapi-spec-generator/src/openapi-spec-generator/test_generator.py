@@ -102,6 +102,50 @@ class SourceDownloadTests(unittest.TestCase):
         )
         self.assertIsNone(request.get_header("Authorization"))
 
+    def fetch_with_errors(self, codes):
+        class Response:
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, size):
+                return b"class BidsController {}"
+
+        calls = []
+
+        def urlopen(request, timeout):
+            calls.append(request)
+            if len(calls) <= len(codes):
+                raise generator.urllib.error.HTTPError(request.full_url, codes[len(calls) - 1], "error", {}, None)
+            return Response()
+
+        with mock.patch.object(generator.github_app, "read_token", return_value=None), \
+                mock.patch.object(generator.urllib.request, "urlopen", side_effect=urlopen), \
+                mock.patch.object(generator.time, "sleep"):
+            try:
+                return generator._download_source(parse_github_blob_url(API_URL)), len(calls)
+            except GenerationError as error:
+                return error, len(calls)
+
+    def test_retries_a_transient_github_error(self):
+        content, calls = self.fetch_with_errors([502, 503])
+        self.assertEqual("class BidsController {}", content)
+        self.assertEqual(3, calls)
+
+    def test_gives_up_after_repeated_transient_errors(self):
+        error, calls = self.fetch_with_errors([502, 502, 502])
+        self.assertEqual("source_unavailable", error.code)
+        self.assertEqual(3, calls)
+
+    def test_does_not_retry_a_missing_file(self):
+        error, calls = self.fetch_with_errors([404])
+        self.assertEqual("source_unavailable", error.code)
+        self.assertEqual(1, calls)
+
 
 class SourceTests(unittest.TestCase):
     def test_parses_github_blob_url(self):

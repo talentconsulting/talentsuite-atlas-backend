@@ -6,6 +6,7 @@ import base64
 import json
 import posixpath
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,6 +23,9 @@ MAX_SPECIFICATIONS = 300
 MAX_TOTAL_BYTES = 10 * 1024 * 1024
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 BRANCH_PATTERN = re.compile(r"^[A-Za-z0-9._/-]+$")
+MAX_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 2
+RETRYABLE_STATUSES = {500, 502, 503, 504}
 
 
 class PublicationError(ValueError):
@@ -59,28 +63,45 @@ class GitHubClient:
         if payload is not None:
             body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
             headers["Content-Type"] = "application/json"
+        # GitHub's 5xx responses are usually transient. Retry only calls that are safe to repeat:
+        # reads, and blob/tree/commit creation, which GitHub stores by content. Creating a branch
+        # or pull request is not repeated, since a retry after a completed call would fail anyway.
+        retryable = method == "GET" or path.endswith(("/git/blobs", "/git/trees", "/git/commits"))
+        attempts = MAX_ATTEMPTS if retryable else 1
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._send(method, path, body, headers)
+            except urllib.error.HTTPError as error:
+                if attempt == attempts or error.code not in RETRYABLE_STATUSES:
+                    raise self._http_error(error) from error
+            except urllib.error.URLError as error:
+                if attempt == attempts:
+                    raise PublicationError("github_unavailable", "The GitHub API could not be reached.") from error
+            time.sleep(RETRY_DELAY_SECONDS * attempt)
+        raise AssertionError("unreachable")
+
+    def _send(self, method: str, path: str, body: bytes | None, headers: dict[str, str]) -> Any:
         request = urllib.request.Request(
             f"{self.api_url}{path}", data=body, headers=headers, method=method
         )
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                response_body = response.read()
-        except urllib.error.HTTPError as error:
-            detail = ""
-            try:
-                error_body = json.loads(error.read().decode("utf-8"))
-                detail = str(error_body.get("message", ""))
-            except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
-                pass
-            message = f"GitHub API returned HTTP {error.code}."
-            if detail:
-                message += f" {detail}"
-            raise PublicationError("github_api_error", message) from error
-        except urllib.error.URLError as error:
-            raise PublicationError("github_unavailable", "The GitHub API could not be reached.") from error
+        with urllib.request.urlopen(request, timeout=30) as response:
+            response_body = response.read()
         if not response_body:
             return {}
         return json.loads(response_body.decode("utf-8"))
+
+    @staticmethod
+    def _http_error(error: urllib.error.HTTPError) -> PublicationError:
+        detail = ""
+        try:
+            error_body = json.loads(error.read().decode("utf-8"))
+            detail = str(error_body.get("message", ""))
+        except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+            pass
+        message = f"GitHub API returned HTTP {error.code}."
+        if detail:
+            message += f" {detail}"
+        return PublicationError("github_api_error", message)
 
 
 def parse_request(input_text: str) -> dict[str, Any]:
