@@ -56,6 +56,36 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual("app/open-api", publisher_calls[0][1]["targetDirectory"])
         self.assertEqual([API_1, API_2], [item["apiFile"] for item in publisher_calls[0][1]["specifications"]])
 
+    def test_same_named_api_files_publish_to_distinct_paths(self):
+        api_web = "https://github.com/source/app/blob/main/src/Web/CertificateController.cs"
+        api_api = "https://github.com/source/app/blob/main/src/Api/CertificateController.cs"
+        publisher_calls = []
+
+        def invoke(project, name, model, payload, max_attempts=2):
+            if name == "discovery":
+                return [
+                    {"apiFile": api_web, "supportingFiles": []},
+                    {"apiFile": api_api, "supportingFiles": []},
+                    {"apiFile": API_2, "supportingFiles": []},
+                ]
+            if name == "generator":
+                return SPEC
+            publisher_calls.append(payload)
+            return {"success": True}
+
+        run_workflow(
+            object(),
+            {"sourceUrl": "https://github.com/source/app/tree/main/src", "targetRepository": "target/specs"},
+            "discovery", "generator", "publisher", "gpt-4o", invoker=invoke,
+        )
+        specifications = publisher_calls[0]["specifications"]
+        self.assertEqual(
+            ["app/open-api/src-Web-CertificateController.openapi.json",
+             "app/open-api/src-Api-CertificateController.openapi.json"],
+            [item["targetPath"] for item in specifications[:2]],
+        )
+        self.assertNotIn("targetPath", specifications[2])
+
     def test_explicit_target_directory_overrides_repository_layout(self):
         def invoke(project, name, model, payload, max_attempts=2):
             if name == "discovery":
