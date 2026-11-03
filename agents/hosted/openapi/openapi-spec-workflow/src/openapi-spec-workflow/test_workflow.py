@@ -86,6 +86,37 @@ class WorkflowTests(unittest.TestCase):
         )
         self.assertNotIn("targetPath", specifications[2])
 
+    def run_deferred_with_generator(self, responses):
+        generator_calls = []
+
+        def invoke(project, name, model, payload, max_attempts=2):
+            if name == "discovery":
+                return [{"apiFile": API_1, "supportingFiles": []}]
+            generator_calls.append(payload)
+            return responses[len(generator_calls) - 1]
+
+        result = run_workflow(
+            object(), {"sourceUrl": SOURCE, "deferPublication": True},
+            "discovery", "generator", "publisher", "gpt-4o", invoker=invoke,
+        )
+        return result, len(generator_calls)
+
+    def test_retries_a_generator_error_once(self):
+        error = {"error": {"code": "source_unavailable", "message": "GitHub returned HTTP 502."}}
+        result, calls = self.run_deferred_with_generator([error, dict(SPEC)])
+        self.assertEqual(2, calls)
+        self.assertEqual(1, result["generatedCount"])
+
+    def test_reports_the_generators_own_error(self):
+        error = {"error": {"code": "source_unavailable", "message": "GitHub returned HTTP 502."}}
+        result, calls = self.run_deferred_with_generator([error, error])
+        self.assertEqual(2, calls)
+        self.assertFalse(result["success"])
+        self.assertEqual(
+            "Generator reported source_unavailable: GitHub returned HTTP 502.",
+            result["generationErrors"][0]["message"],
+        )
+
     def test_explicit_target_directory_overrides_repository_layout(self):
         def invoke(project, name, model, payload, max_attempts=2):
             if name == "discovery":

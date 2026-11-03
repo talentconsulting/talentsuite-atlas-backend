@@ -9,6 +9,9 @@ import urllib.parse
 from typing import Any, Callable
 
 
+GENERATION_ATTEMPTS = 2
+
+
 class WorkflowError(ValueError):
     """A stable workflow validation or execution error."""
 
@@ -156,6 +159,14 @@ def validate_discovery_output(value: Any, source_url: str, max_files: int) -> li
 
 
 def validate_specification(value: Any) -> dict[str, Any]:
+    error = value.get("error") if isinstance(value, dict) else None
+    if isinstance(error, dict):
+        # The generator reports its own failures (e.g. a source file GitHub would not serve) as
+        # {"error": {"code", "message"}}; pass that on rather than a generic shape error.
+        raise WorkflowError(
+            "generator_error",
+            f"Generator reported {error.get('code', 'an error')}: {str(error.get('message', ''))[:200]}",
+        )
     if not isinstance(value, dict) or value.get("openapi") != "3.1.0":
         raise WorkflowError("invalid_generator_output", "Generator response must be an OpenAPI 3.1.0 object.")
     for field in ("info", "paths", "components"):
@@ -273,8 +284,16 @@ def run_workflow(
     tenant = request.get("tenant")
 
     def generate(index: int, item: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        specification = invoker(project, generator_name, model, {**item, **({"tenant": tenant} if tenant else {})})
-        return index, validate_specification(specification)
+        # invoke_agent already retries a failed call; this also retries a call that answered with
+        # an error or a malformed document, which is usually transient (a GitHub hiccup, a bad sample).
+        for attempt in range(1, GENERATION_ATTEMPTS + 1):
+            specification = invoker(project, generator_name, model, {**item, **({"tenant": tenant} if tenant else {})})
+            try:
+                return index, validate_specification(specification)
+            except WorkflowError:
+                if attempt == GENERATION_ATTEMPTS:
+                    raise
+        raise AssertionError("unreachable")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(max_concurrency, 8))) as executor:
         futures = {
