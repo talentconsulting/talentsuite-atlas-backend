@@ -45,6 +45,8 @@ jobs:
       matrix: ${{ steps.resolve.outputs.matrix }}
       target_repository: ${{ steps.resolve.outputs.target_repository }}
       target_base_branch: ${{ steps.resolve.outputs.target_base_branch }}
+      manifest_path: ${{ steps.resolve.outputs.manifest_path }}
+      manifest: ${{ steps.resolve.outputs.manifest }}
     steps:
       - uses: actions/checkout@v4
 
@@ -97,6 +99,8 @@ jobs:
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "target_repository=$target_repository" >> "$GITHUB_OUTPUT"
           echo "target_base_branch=$target_base_branch" >> "$GITHUB_OUTPUT"
+          echo "manifest_path=$path" >> "$GITHUB_OUTPUT"
+          echo "manifest=$(jq -c . "$manifest_file")" >> "$GITHUB_OUTPUT"
 
   run:
     needs: prepare
@@ -169,16 +173,42 @@ jobs:
           TARGET_REPOSITORY: ${{ needs.prepare.outputs.target_repository }}
           TARGET_BASE_BRANCH: ${{ needs.prepare.outputs.target_base_branch }}
           DEFER_PUBLICATION: ${{ inputs.defer_publication }}
+          GITHUB_REPO_INPUT: ${{ inputs.github_repo }}
+          MANIFEST_NODE: ${{ matrix.node }}
+          MANIFEST_PATH: ${{ needs.prepare.outputs.manifest_path }}
+          MANIFEST: ${{ needs.prepare.outputs.manifest }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Record the scanned commit in the same pull request, as the manifest orchestrators do, so the
+          # next scheduled run does not rescan this repository. The commit is resolved before the scan
+          # starts; a commit pushed during the run is picked up by the next one.
+          manifest_update='{}'
+          if [ "$DEFER_PUBLICATION" != "true" ]; then
+            commit=""
+            if [[ "$SOURCE_URL" =~ ^https://github\.com/([^/]+)/([^/]+)/tree/([^/]+) ]]; then
+              commit=$(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${BASH_REMATCH[1]}/${BASH_REMATCH[2]}/commits/${BASH_REMATCH[3]}" \
+                | jq -r '.sha // empty') || commit=""
+            fi
+            if [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "Recording $commit as ${MANIFEST_NODE}'s last-commit-hash-scanned."
+              manifest_update=$(printf '%s' "$MANIFEST" | jq -c --arg repo "$GITHUB_REPO_INPUT" --arg node "$MANIFEST_NODE" \
+                --arg commit "$commit" --arg path "$MANIFEST_PATH" -f .github/workflows/scripts/record-scanned-commit.jq)
+            else
+              echo "::warning::${{ matrix.key }}: could not resolve the source commit, so the manifest hash will not be updated."
+            fi
+          fi
           payload=$(jq -n \
             --arg sourceUrl "$SOURCE_URL" \
             --arg targetRepository "$TARGET_REPOSITORY" \
             --arg targetBaseBranch "$TARGET_BASE_BRANCH" \
             --argjson deferPublication "$DEFER_PUBLICATION" \
+            --argjson manifestUpdate "$manifest_update" \
             '{sourceUrl: $sourceUrl, targetRepository: $targetRepository, tenant: $targetRepository}
              + (if $targetBaseBranch != "" then {targetBaseBranch: $targetBaseBranch} else {} end)
-             + (if $deferPublication then {deferPublication: true} else {} end)')
+             + (if $deferPublication then {deferPublication: true} else {} end)
+             + $manifestUpdate')
           echo "Payload: $payload"
           response_file="$RUNNER_TEMP/${{ matrix.key }}-response.txt"
           agent_json_file="$RUNNER_TEMP/${{ matrix.key }}-agent-response.json"

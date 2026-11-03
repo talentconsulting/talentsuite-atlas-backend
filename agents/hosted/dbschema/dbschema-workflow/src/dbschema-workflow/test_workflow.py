@@ -436,3 +436,28 @@ class TenantTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ManifestForwardingTests(unittest.TestCase):
+    def test_accepts_and_forwards_the_manifest_update(self):
+        import workflow
+
+        request = workflow.parse_workflow_request(json.dumps({
+            "sourceUrl": "https://github.com/source/app/tree/main/src",
+            "targetRepository": "target/data",
+            "manifestFile": {"path": "manifest.json", "content": []},
+            "manifestNodes": ["node"],
+        }))
+        payload = workflow._publisher_payload(request, {})
+        self.assertEqual({"path": "manifest.json", "content": []}, payload["manifestFile"])
+        self.assertEqual(["node"], payload["manifestNodes"])
+
+    def test_rejects_a_manifest_file_that_is_not_an_object(self):
+        import workflow
+
+        with self.assertRaises(workflow.WorkflowError):
+            workflow.parse_workflow_request(json.dumps({
+                "sourceUrl": "https://github.com/source/app/tree/main/src",
+                "targetRepository": "target/data",
+                "manifestFile": "manifest.json",
+            }))
