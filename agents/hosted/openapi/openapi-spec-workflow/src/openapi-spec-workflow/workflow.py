@@ -204,7 +204,30 @@ def _publisher_payload(request: dict[str, Any], specifications: list[dict[str, A
     for source, destination in mappings.items():
         if source in request:
             payload[destination] = request[source]
+    payload["specifications"] = _with_unique_target_paths(payload["targetDirectory"], specifications)
     return payload
+
+
+def _with_unique_target_paths(target_directory: str, specifications: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # Two files with the same name (e.g. distinct Api and Web projects both defining a
+    # CertificateController) would otherwise collide on the same output path. Match the manifest
+    # orchestrator: fall back to the full relative path -- always unique within one repository --
+    # only for the colliding names, so the common case keeps its short, filename-only path.
+    relative = [
+        [urllib.parse.unquote(part) for part in urllib.parse.urlparse(item["apiFile"]).path.split("/") if part][4:]
+        for item in specifications
+    ]
+    stems = [parts[-1].rsplit(".", 1)[0] if parts and "." in parts[-1] else (parts[-1] if parts else "") for parts in relative]
+    counts: dict[str, int] = {}
+    for stem in stems:
+        counts[stem] = counts.get(stem, 0) + 1
+    result = []
+    for item, parts, stem in zip(specifications, relative, stems):
+        if counts[stem] > 1 and len(parts) > 1:
+            slug = "-".join(parts[:-1] + [stem])
+            item = {**item, "targetPath": f"{target_directory.strip('/')}/{slug}.openapi.json"}
+        result.append(item)
+    return result
 
 
 def run_workflow(

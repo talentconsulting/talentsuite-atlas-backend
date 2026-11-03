@@ -14,7 +14,7 @@ A hosted orchestration agent that calls `openapi-source-discovery`, invokes `ope
 }
 ```
 
-`sourceUrl` and `targetRepository` are required. By default, specifications are written directly beneath `<source-repository>/open-api` in the target repository; source directories are not reproduced. `targetDirectory` can override that directory; it and `targetBaseBranch`, `branchName`, `pullRequestTitle`, and `pullRequestBody` are forwarded to the PR creator.
+`sourceUrl` and `targetRepository` are required. By default, specifications are written directly beneath `<source-repository>/open-api` in the target repository; source directories are not reproduced. When two API files share a name, those files instead take their full relative path, joined with hyphens (for example `src-Api-CertificateController.openapi.json`), as the manifest orchestrator does. `targetDirectory` can override that directory; it and `targetBaseBranch`, `branchName`, `pullRequestTitle`, and `pullRequestBody` are forwarded to the PR creator.
 
 Internal orchestrators can set `deferPublication: true`. In that mode only `sourceUrl` is required, the workflow returns its generated `specifications` array, and it does not call the PR creator. This allows a parent workflow to combine multiple repositories into one atomic pull request.
 
