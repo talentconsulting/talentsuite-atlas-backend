@@ -10,7 +10,7 @@ def flowdefs: {
 
 # Inputs: $repo (github-repo to match) and $keys (requested flow keys, or null for all).
 # Reads the manifest array from stdin/file and resolves it to a matrix of
-# {key, agent, project_dir, source_url} entries for the matched repository,
+# {key, agent, project_dir, node, source_url} entries for the matched repository,
 # using each flow's own "path-to-scan" from the manifest -- not one shared source URL.
 # project_dir is required: `azd ai agent invoke <name>` resolves <name> against the
 # azure.yaml in the current working directory, not just the Foundry project endpoint.
@@ -30,6 +30,7 @@ def flowdefs: {
              key: $f.key,
              agent: $f.value.agent,
              project_dir: $f.value.project_dir,
+             node: $match.key,
              source_url: (($entry["github-repo"] | rtrimstr("/")) + "/" + $match.value["path-to-scan"])
            }
        )) as $matrix

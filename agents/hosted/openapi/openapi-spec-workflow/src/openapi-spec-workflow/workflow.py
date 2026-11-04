@@ -10,6 +10,9 @@ from typing import Any, Callable
 
 
 GENERATION_ATTEMPTS = 2
+# Run All Flows passes the manifest with this repository's scanned commit recorded, so the hash
+# lands in the same pull request; the PR creator validates it and applies only manifestNodes.
+MANIFEST_FIELDS = ("manifestFile", "manifestNodes")
 
 
 class WorkflowError(ValueError):
@@ -81,7 +84,7 @@ def parse_workflow_request(input_text: str) -> dict[str, Any]:
         # The tenant's owner/repo data repository; discovery and the generator mint their GitHub read tokens for it.
         "tenant",
     }
-    if not set(payload).issubset(allowed):
+    if not set(payload).issubset(allowed | set(MANIFEST_FIELDS)):
         raise WorkflowError("invalid_input", "Input contains unsupported properties.")
     parse_source_url(payload.get("sourceUrl"))
     defer_publication = payload.get("deferPublication", False)
@@ -98,6 +101,10 @@ def parse_workflow_request(input_text: str) -> dict[str, Any]:
             raise WorkflowError("invalid_input", f"{field} must be a non-empty string.")
     if "apiFiles" in payload and not isinstance(payload["apiFiles"], list):
         raise WorkflowError("invalid_input", "apiFiles must be an array when supplied.")
+    if "manifestFile" in payload and not isinstance(payload["manifestFile"], dict):
+        raise WorkflowError("invalid_input", "manifestFile must be an object when supplied.")
+    if "manifestNodes" in payload and not isinstance(payload["manifestNodes"], list):
+        raise WorkflowError("invalid_input", "manifestNodes must be an array when supplied.")
     return payload
 
 
@@ -216,6 +223,9 @@ def _publisher_payload(request: dict[str, Any], specifications: list[dict[str, A
         if source in request:
             payload[destination] = request[source]
     payload["specifications"] = _with_unique_target_paths(payload["targetDirectory"], specifications)
+    for field in MANIFEST_FIELDS:
+        if field in request:
+            payload[field] = request[field]
     return payload
 
 
@@ -345,6 +355,9 @@ def run_workflow(
             "errors": [],
         }
 
+    if generation_errors:
+        # Some specifications are missing, so leave the manifest's hash alone and let the next scan retry them.
+        request = {key: value for key, value in request.items() if key not in MANIFEST_FIELDS}
     publication = invoker(
         project,
         publisher_name,

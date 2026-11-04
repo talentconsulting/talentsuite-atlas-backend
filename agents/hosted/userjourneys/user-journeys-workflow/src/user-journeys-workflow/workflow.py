@@ -20,6 +20,11 @@ CATALOG_FIELDS = (
 )
 
 
+# Run All Flows passes the manifest with this repository's scanned commit recorded, so the hash
+# lands in the same pull request; the PR creator validates it and applies only manifestNodes.
+MANIFEST_FIELDS = ("manifestFile", "manifestNodes")
+
+
 class WorkflowError(RuntimeError):
     """A stable workflow validation or execution error."""
 
@@ -72,7 +77,7 @@ def parse_workflow_request(input_text: str) -> dict[str, Any]:
     # tenant is the owner/repo data repository; discovery and the generator mint their GitHub read tokens for it.
     allowed = {"sourceUrl", "targetRepository", "targetDirectory", "targetBaseBranch", "branchName",
                "pullRequestTitle", "pullRequestBody", "deferPublication", "tenant"}
-    if not set(payload).issubset(allowed):
+    if not set(payload).issubset(allowed | set(MANIFEST_FIELDS)):
         raise WorkflowError("invalid_input", "Input contains unsupported properties.")
     parse_source_url(payload.get("sourceUrl"))
     deferred = payload.get("deferPublication", False)
@@ -87,6 +92,10 @@ def parse_workflow_request(input_text: str) -> dict[str, Any]:
         value = payload.get(field)
         if value is not None and (not isinstance(value, str) or not value.strip()):
             raise WorkflowError("invalid_input", f"{field} must be a non-empty string.")
+    if "manifestFile" in payload and not isinstance(payload["manifestFile"], dict):
+        raise WorkflowError("invalid_input", "manifestFile must be an object when supplied.")
+    if "manifestNodes" in payload and not isinstance(payload["manifestNodes"], list):
+        raise WorkflowError("invalid_input", "manifestNodes must be an array when supplied.")
     return payload
 
 
@@ -211,6 +220,9 @@ def _publisher_payload(request: dict[str, Any], catalog: dict[str, Any]) -> dict
                                  "pullRequestTitle": "pullRequestTitle", "pullRequestBody": "pullRequestBody"}.items():
         if source in request:
             payload[destination] = request[source]
+    for field in MANIFEST_FIELDS:
+        if field in request:
+            payload[field] = request[field]
     return payload
 
 
