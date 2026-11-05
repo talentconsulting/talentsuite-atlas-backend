@@ -81,6 +81,27 @@ def _priority(path: str, content: str) -> tuple[int, str]:
     return (2, lowered)
 
 
+def _in_project(path: str, project_dirs: set[str]) -> bool:
+    return any(not directory or path.startswith(f"{directory}/") for directory in project_dirs)
+
+
+def _prefer_database_projects(
+    selected: list[tuple[tuple[int, str], str, int]], project_dirs: set[str], excluded: list[dict[str, str]]
+) -> list[tuple[tuple[int, str], str, int]]:
+    """Keep only a SQL database project's scripts when the source has one that declares tables.
+
+    A repository with a .sqlproj usually also maps the same tables in Entity Framework, under the
+    class names and without a schema (Learner for dbo.LearnerData), alongside plain classes stored
+    inside an entity (Course). Describing both turns one table into several, so the database
+    project, which is what is actually deployed, is the only source used.
+    """
+    in_project = [item for item in selected if _in_project(item[1], project_dirs)]
+    if not any(item[1].lower().endswith(".sql") for item in in_project):
+        return selected
+    excluded.extend({"path": path, "reason": "covered_by_database_project"} for _, path, _ in selected if not _in_project(path, project_dirs))
+    return in_project
+
+
 def _blob(location: SourceLocation, path: str) -> str:
     return f"https://github.com/{urllib.parse.quote(location.owner, safe='')}/{urllib.parse.quote(location.repository, safe='')}/blob/{urllib.parse.quote(location.ref, safe='')}/{urllib.parse.quote(path, safe='/')}"
 
@@ -112,6 +133,7 @@ def scan(source_url: str, archive_bytes: bytes | None = None, tenant: str | None
     excluded: list[dict[str, str]] = []
     total_uncompressed = 0
     has_persistence = False
+    database_projects: set[str] = set()
     try:
         with zipfile.ZipFile(io.BytesIO(archive_bytes if archive_bytes is not None else _download_archive(location, tenant))) as archive:
             for member in archive.infolist():
@@ -121,6 +143,9 @@ def scan(source_url: str, archive_bytes: bytes | None = None, tenant: str | None
                 if total_uncompressed > MAX_UNCOMPRESSED_BYTES:
                     raise ScanError("GitHub archive exceeds the uncompressed size limit.")
                 _, separator, path = member.filename.partition("/")
+                if separator and path.lower().endswith(".sqlproj") and _under_base(path, location.base_path) and not _ignored(path):
+                    database_projects.add(path.rpartition("/")[0])
+                    continue
                 if not separator or not _under_base(path, location.base_path) or _ignored(path) or not _supported(path):
                     continue
                 if member.file_size > MAX_FILE_BYTES:
@@ -138,6 +163,8 @@ def scan(source_url: str, archive_bytes: bytes | None = None, tenant: str | None
         raise ScanError("GitHub returned an invalid source archive.") from error
     if not has_persistence:
         return {"schemaFiles": [], "excludedFiles": sorted(excluded, key=lambda item: item["path"])}
+    if database_projects:
+        selected = _prefer_database_projects(selected, database_projects, excluded)
     selected.sort()
     files: list[str] = []
     total_bytes = 0
