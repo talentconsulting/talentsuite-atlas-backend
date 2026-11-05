@@ -104,6 +104,43 @@ class ArchiveDownloadTests(unittest.TestCase):
         read_token.assert_called_once_with("tenant/atlas")
         return requests[0]
 
+    def test_a_sql_database_project_is_the_only_source_when_it_declares_tables(self):
+        base = "https://github.com/source/catalog/tree/main/src"
+        result = scan(base, archive({
+            "src/Catalog.Database/Catalog.Database.sqlproj": "<Project />",
+            "src/Catalog.Database/Tables/LearnerData.sql": "CREATE TABLE [dbo].[LearnerData] ([Id] BIGINT NOT NULL)",
+            "src/Catalog/Data/CatalogDbContext.cs": "class CatalogDbContext : DbContext { DbSet<Learner> Learners; }",
+            "src/Catalog/Data/Entities/Learner.cs": "class Learner { public long Id { get; set; } }",
+            "src/Catalog/Data/Entities/Course.cs": "class Course { public string TrainingCode { get; set; } }",
+        }))
+
+        self.assertEqual(["https://github.com/source/catalog/blob/main/src/Catalog.Database/Tables/LearnerData.sql"], result["schemaFiles"])
+        self.assertEqual(
+            {"src/Catalog/Data/CatalogDbContext.cs", "src/Catalog/Data/Entities/Course.cs", "src/Catalog/Data/Entities/Learner.cs"},
+            {item["path"] for item in result["excludedFiles"] if item["reason"] == "covered_by_database_project"},
+        )
+
+    def test_entity_framework_is_still_used_when_the_database_project_has_no_tables(self):
+        base = "https://github.com/source/catalog/tree/main/src"
+        result = scan(base, archive({
+            "src/Catalog.Database/Catalog.Database.sqlproj": "<Project />",
+            "src/Catalog/Data/CatalogDbContext.cs": "class CatalogDbContext : DbContext { DbSet<Learner> Learners; }",
+            "src/Catalog/Data/Entities/Learner.cs": "class Learner { public long Id { get; set; } }",
+        }))
+
+        self.assertEqual(2, len(result["schemaFiles"]))
+        self.assertEqual([], result["excludedFiles"])
+
+    def test_ignores_a_database_project_outside_the_requested_tree(self):
+        result = scan(SOURCE, archive({
+            "src/Other.Database/Other.Database.sqlproj": "<Project />",
+            "src/Other.Database/Tables/Other.sql": "CREATE TABLE Other (Id int)",
+            "src/Database/AppDbContext.cs": "class AppDbContext : DbContext {}",
+            "src/Database/Tables/Order.cs": "class Order { public int Id { get; set; } }",
+        }))
+
+        self.assertEqual(2, len(result["schemaFiles"]))
+
     def test_the_tenants_token_downloads_through_the_api(self):
         request = self.download("installation-token")
         self.assertEqual("https://api.github.com/repos/source/catalog/zipball/main", request.full_url)
