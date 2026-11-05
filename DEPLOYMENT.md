@@ -53,7 +53,15 @@ In Azure:
    az role assignment create --assignee <app-client-id> --role Contributor \
      --scope /subscriptions/<subscription-id>/resourceGroups/<group>
    az role assignment create --assignee <app-client-id> --role "Role Based Access Control Administrator" \
-     --scope /subscriptions/<subscription-id>/resourceGroups/<group>
+     --scope /subscriptions/<subscription-id>/resourceGroups/<group> \
+     --condition-version 2.0 --condition "$allowed_roles"
+   ```
+
+   `$allowed_roles` limits the identity to assigning and removing the four roles the workflows give out: Foundry Project Manager, Azure AI Developer and Reader for the template, and Foundry User for the agents' own identities (see [Agent identities](#agent-identities)):
+
+   ```bash
+   roles='eadc314b-1a2d-4efa-be10-5d325db5065e, 64702f94-c441-49e6-a78b-ef80e0188fee, acdd72a7-3385-48ef-bd42-f606fba81ae7, 53ca6127-db72-4b80-b1b0-d745d6d5456d'
+   allowed_roles="((!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {$roles})) AND ((!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {$roles}))"
    ```
 
    **Contributor** creates the Foundry account, project, model deployments, Log Analytics and Application Insights. **Role Based Access Control Administrator** is needed only when `createRoleAssignments` is on, so the template can give the identity its Foundry Project Manager and Azure AI Developer roles.
@@ -78,7 +86,7 @@ In GitHub, create a repository environment with the environment's name, and in i
 
 ### The test environment
 
-`test` was created this way in `atlas-test-rg` (UK South), with the "Atlas test deployments" app registration and `infra/test.bicepparam`. Its Role Based Access Control Administrator assignment has a condition that lets it assign or remove only the three roles the template uses (Foundry Project Manager, Azure AI Developer and Reader).
+`test` was created this way in `atlas-test-rg` (UK South), with the "Atlas test deployments" app registration and `infra/test.bicepparam`. Its Role Based Access Control Administrator assignment has a condition that lets it assign or remove only the three roles the template uses (Foundry Project Manager, Azure AI Developer and Reader). Until Foundry User is added to that condition, the deploy step that grants agents their session access only warns; the agents deployed before 5 November 2026 were given Foundry User by hand.
 
 ### The dev environment
 
@@ -94,6 +102,12 @@ To stop sessions building up, the caller deletes the session as soon as the call
 - GitHub Actions runs `.github/workflows/scripts/delete-agent-session.sh` after each `azd ai agent invoke`
 
 Both are best effort: a failed delete logs a warning and never fails the call. A call that fails or times out returns no session id, so its session is left to expire.
+
+### Agent identities
+
+Each hosted agent runs as its own identity, which Foundry creates the first time the agent is deployed, with no roles. Calling another agent works without a role, but deleting a session needs **Foundry User** on the Foundry account. Without it, `end_session` logs a warning and the session is left behind, and a full manifest run fills the quota in minutes.
+
+The deploy workflows for every workflow and manifest orchestrator agent therefore end with **Give the agent access to delete its hosted sessions**, which runs `.github/workflows/scripts/grant-agent-session-access.sh`. It reads the agent's identity from the project and assigns it Foundry User on the account, under a fixed assignment name so a redeploy is a no-op. The deploy identity needs Foundry User in its Role Based Access Control Administrator condition for this (see [What to create before provisioning](#what-to-create-before-provisioning)); without it the step warns and the deploy still succeeds. Agents that don't call other agents (discovery, generators and PR creators) are skipped.
 
 To list or delete sessions by hand you need the **Foundry User** role on the Foundry account:
 
