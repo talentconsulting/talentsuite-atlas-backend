@@ -10,7 +10,9 @@
 set -u
 agent="$1"
 response_file="$2"
-session_id=$(grep -oiE '(x-agent-session-id: *|"agent_session_id": *")[0-9a-f]{32,}' "$response_file" 2>/dev/null \
+# --output raw prints the X-Agent-Session-Id header and the response's agent_session_id; the default
+# output prints a "Session:" line.
+session_id=$(grep -oiE '(x-agent-session-id: *|"agent_session_id": *"|^Session: *)[0-9a-f]{32,}' "$response_file" 2>/dev/null \
   | grep -oE '[0-9a-f]{32,}$' | head -1)
 if [ -z "$session_id" ]; then
   echo "No hosted session id in the ${agent} response, so there is no session to delete."
