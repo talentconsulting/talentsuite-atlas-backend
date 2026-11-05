@@ -374,6 +374,53 @@ class TenantTests(unittest.TestCase):
         self.assertTrue(all("tenant" not in payload for _, payload in calls))
 
 
+class SessionCleanupTests(unittest.TestCase):
+    """Each call starts a hosted session; it must be deleted so idle sessions don't fill the quota."""
+
+    class _Response:
+        output_text = '{"ok": true}'
+        agent_session_id = "session-1"
+
+    def _project(self, delete_error: Exception | None = None):
+        deleted = []
+        response = self._Response()
+
+        class Responses:
+            def create(self, **_):
+                return response
+
+        class Client:
+            responses = Responses()
+
+        class Agents:
+            def delete_session(self, agent_name, session_id):
+                if delete_error:
+                    raise delete_error
+                deleted.append((agent_name, session_id))
+
+        class Project:
+            agents = Agents()
+
+            def get_openai_client(self, agent_name):
+                return Client()
+
+        return Project(), deleted
+
+    def test_deletes_the_session_the_call_ran_in(self):
+        import workflow as subject
+
+        project, deleted = self._project()
+        self.assertEqual(subject.invoke_agent(project, "worker", "model", {}), {"ok": True})
+        self.assertEqual(deleted, [("worker", "session-1")])
+
+    def test_a_failed_delete_does_not_fail_the_call(self):
+        import workflow as subject
+
+        project, _ = self._project(RuntimeError("forbidden"))
+        with self.assertLogs(subject.__name__, level="WARNING"):
+            self.assertEqual(subject.invoke_agent(project, "worker", "model", {}, max_attempts=1), {"ok": True})
+
+
 if __name__ == "__main__":
     unittest.main()
 

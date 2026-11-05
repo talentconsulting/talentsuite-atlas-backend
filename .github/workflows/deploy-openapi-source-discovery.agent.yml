@@ -131,6 +131,7 @@ jobs:
           set -euo pipefail
           payload="{\"sourceUrl\":\"$AGENT_TEST_SOURCE_URL\"}"
           azd ai agent invoke openapi-source-discovery "$payload" > "$RUNNER_TEMP/openapi-source-discovery-response.txt" 2>&1
+          "$GITHUB_WORKSPACE/.github/workflows/scripts/delete-agent-session.sh" openapi-source-discovery "$RUNNER_TEMP/openapi-source-discovery-response.txt"
           cat "$RUNNER_TEMP/openapi-source-discovery-response.txt"
 
           if ! grep -q '"apiFile"' "$RUNNER_TEMP/openapi-source-discovery-response.txt"; then

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import functools
 import json
+import logging
 import re
 import urllib.error
 import urllib.parse
@@ -257,6 +258,23 @@ def parse_json_value(text: str) -> Any:
             raise ManifestError("invalid_agent_response", "Agent response was not JSON.") from error
 
 
+def end_session(project: Any, agent_name: str, response: Any) -> None:
+    """Delete the hosted session a finished call ran in.
+
+    Every call to a hosted agent starts a new session, and an idle session counts against the
+    subscription's concurrent-session quota until it expires 30 days later, so a few weeks of
+    runs fill the quota and every call is refused. Clean-up is best effort: a failure is logged
+    and never fails the call that has already succeeded.
+    """
+    session_id = getattr(response, "agent_session_id", None)
+    if not isinstance(session_id, str) or not session_id:
+        return
+    try:
+        project.agents.delete_session(agent_name, session_id)
+    except Exception as error:
+        logging.getLogger(__name__).warning("Could not delete session %s of %s: %s", session_id, agent_name, error)
+
+
 def invoke_agent(project: Any, agent_name: str, model: str, payload: dict[str, Any], max_attempts: int = 2) -> Any:
     last_error: Exception | None = None
     for _ in range(max(1, max_attempts)):
@@ -264,6 +282,7 @@ def invoke_agent(project: Any, agent_name: str, model: str, payload: dict[str, A
             response = project.get_openai_client(agent_name=agent_name).responses.create(
                 model=model, input=json.dumps(payload, separators=(",", ":")), timeout=600
             )
+            end_session(project, agent_name, response)
             return parse_json_value(response.output_text)
         except Exception as error:
             last_error = error

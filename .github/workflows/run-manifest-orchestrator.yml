@@ -129,6 +129,7 @@ jobs:
           # default 1800s client timeout as the manifest grows; --timeout 0 removes that client
           # cap so the job's own GitHub Actions timeout is the only bound.
           azd ai agent invoke "${{ steps.resolve.outputs.agent }}" "$payload" --no-prompt --timeout 0 --output raw > "$response_file" 2>&1 || true
+          "$GITHUB_WORKSPACE/.github/workflows/scripts/delete-agent-session.sh" "${{ steps.resolve.outputs.agent }}" "$response_file"
           cat "$response_file"
 
           # --output raw prints the full HTTP response as a Server-Sent-Events stream, not a

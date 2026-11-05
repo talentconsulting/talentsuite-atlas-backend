@@ -84,6 +84,24 @@ In GitHub, create a repository environment with the environment's name, and in i
 
 The resource group, app registration ("Azure AI deployments"), roles, `atlas-github-app` connection and secrets for `talent-day-rg` already exist. The one thing missing for provisioning is **Contributor** on `talent-day-rg` for that app's service principal: its existing roles (Azure AI Developer and Foundry Project Manager) can't read the resource group or run deployments, so the workflow fails at "Check the resource group exists". `dev.bicepparam` turns role assignments off, so it doesn't need Role Based Access Control Administrator.
 
+## Hosted agent sessions
+
+Every call to a hosted agent starts a new session. An idle session counts against the subscription's limit of 1000 concurrent hosted-agent sessions per region until it expires, 30 days after its last use, and once the limit is reached every call fails with `session_quota_exceeded`.
+
+To stop sessions building up, the caller deletes the session as soon as the call returns:
+
+- workflows and orchestrators call `end_session` in `invoke_agent`, which deletes the session named by the response's `agent_session_id`
+- GitHub Actions runs `.github/workflows/scripts/delete-agent-session.sh` after each `azd ai agent invoke`
+
+Both are best effort: a failed delete logs a warning and never fails the call. A call that fails or times out returns no session id, so its session is left to expire.
+
+To list or delete sessions by hand you need the **Foundry User** role on the Foundry account:
+
+```sh
+azd ai agent sessions list -n <agent> --limit 100
+azd ai agent sessions delete <session-id> -n <agent>
+```
+
 ## Usage and billing
 
 Tenants are charged for the model tokens their runs use, at cost plus a markup. Each environment keeps its own ledger.

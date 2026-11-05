@@ -133,6 +133,7 @@ jobs:
           set -euo pipefail
           response_file="$RUNNER_TEMP/eventcatalog-generator-response.txt"
           azd ai agent invoke eventcatalog-generator '{}' > "$response_file" 2>&1
+          "$GITHUB_WORKSPACE/.github/workflows/scripts/delete-agent-session.sh" eventcatalog-generator "$response_file"
           cat "$response_file"
           grep -q '"invalid_input"' "$response_file"
           echo "Event and Command Catalog Generator validation smoke test passed."
