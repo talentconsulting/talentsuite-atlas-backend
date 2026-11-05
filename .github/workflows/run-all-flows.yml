@@ -215,6 +215,7 @@ jobs:
           # A single repository can still involve substantial generation work; --timeout 0 removes
           # azd's default 1800s client timeout so the job's own GitHub Actions timeout is the only bound.
           azd ai agent invoke "${{ matrix.agent }}" "$payload" --no-prompt --timeout 0 --output raw > "$response_file" 2>&1 || true
+          "$GITHUB_WORKSPACE/.github/workflows/scripts/delete-agent-session.sh" "${{ matrix.agent }}" "$response_file"
           cat "$response_file"
 
           # --output raw prints the full HTTP response as a Server-Sent-Events stream, not a
