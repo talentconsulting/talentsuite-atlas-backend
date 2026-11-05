@@ -126,6 +126,12 @@ jobs:
         working-directory: ${{ env.AGENT_PROJECT_DIR }}
         run: azd ai agent show system-summary-manifest-orchestrator --output json --no-prompt
 
+      - name: Give the agent access to delete its hosted sessions
+        shell: bash
+        env:
+          TARGET_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: '"$GITHUB_WORKSPACE/.github/workflows/scripts/grant-agent-session-access.sh" system-summary-manifest-orchestrator'
+
       - name: Smoke test validation without reading GitHub
         working-directory: ${{ env.AGENT_PROJECT_DIR }}
         shell: bash
