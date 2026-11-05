@@ -194,7 +194,7 @@ jobs:
             if [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
               echo "Recording $commit as ${MANIFEST_NODE}'s last-commit-hash-scanned."
               manifest_update=$(printf '%s' "$MANIFEST" | jq -c --arg repo "$GITHUB_REPO_INPUT" --arg node "$MANIFEST_NODE" \
-                --arg commit "$commit" --arg path "$MANIFEST_PATH" -f .github/workflows/scripts/record-scanned-commit.jq)
+                --arg commit "$commit" --arg path "$MANIFEST_PATH" -f "$GITHUB_WORKSPACE/.github/workflows/scripts/record-scanned-commit.jq")
             else
               echo "::warning::${{ matrix.key }}: could not resolve the source commit, so the manifest hash will not be updated."
             fi
