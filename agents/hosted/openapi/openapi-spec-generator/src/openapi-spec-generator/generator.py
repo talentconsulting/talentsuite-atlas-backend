@@ -183,13 +183,11 @@ def _download_source(source: GitHubFile, tenant: str | None = None) -> str:
         time.sleep(RETRY_DELAY_SECONDS * attempt)
     if len(content) > MAX_FILE_BYTES:
         raise GenerationError("source_too_large", f"Source file is too large: {source.path}")
+    # Older .NET files are often Windows-1252; discovery reads them that way too.
     try:
-        return content.decode("utf-8")
-    except UnicodeDecodeError as error:
-        raise GenerationError(
-            "invalid_source",
-            f"Source file is not UTF-8 text: {source.path}",
-        ) from error
+        return content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return content.decode("cp1252", errors="replace")
 
 
 def load_sources(

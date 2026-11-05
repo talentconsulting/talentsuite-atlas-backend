@@ -124,6 +124,18 @@ def _code_only(content: str) -> str:
     return COMMENT_OR_LITERAL_RE.sub(lambda match: " " * len(match.group()), content)
 
 
+def _decode(content: bytes) -> str:
+    """Read a source file as UTF-8, falling back to Windows-1252.
+
+    Older .NET files are often saved as Windows-1252 (an accented name in a comment is enough), and
+    one such file used to fail the whole repository as "an invalid source archive".
+    """
+    try:
+        return content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return content.decode("cp1252", errors="replace")
+
+
 def _download_sources(location: SourceLocation, tenant: str | None = None) -> dict[str, str]:
     owner = urllib.parse.quote(location.owner, safe="")
     repository = urllib.parse.quote(location.repository, safe="")
@@ -161,8 +173,8 @@ def _download_sources(location: SourceLocation, tenant: str | None = None) -> di
                     raise ScanError("GitHub archive exceeds the uncompressed size limit.")
                 _, separator, relative_path = member.filename.partition("/")
                 if separator and _is_source_file(relative_path):
-                    sources[relative_path] = archive.read(member).decode("utf-8")
-    except (zipfile.BadZipFile, UnicodeDecodeError) as error:
+                    sources[relative_path] = _decode(archive.read(member))
+    except zipfile.BadZipFile as error:
         raise ScanError("GitHub returned an invalid source archive.") from error
     return dict(sorted(sources.items()))
 

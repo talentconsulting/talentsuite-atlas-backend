@@ -224,11 +224,12 @@ class ScanTests(unittest.TestCase):
 
 
 class ArchiveDownloadTests(unittest.TestCase):
-    def download(self, token):
+    def download(self, token, files=None):
         requests = []
         archive = io.BytesIO()
-        with zipfile.ZipFile(archive, "w"):
-            pass
+        with zipfile.ZipFile(archive, "w") as output:
+            for path, content in (files or {}).items():
+                output.writestr(f"catalog-feature-api/{path}", content)
 
         class Response:
             headers = {}
@@ -242,9 +243,17 @@ class ArchiveDownloadTests(unittest.TestCase):
 
         with mock.patch.object(scanner.github_app, "read_token", return_value=token) as read_token, \
                 mock.patch.object(scanner.urllib.request, "urlopen", side_effect=urlopen):
-            scanner._download_sources(parse_source_url(SOURCE_URL), "tenant/atlas")
+            self.sources = scanner._download_sources(parse_source_url(SOURCE_URL), "tenant/atlas")
         read_token.assert_called_once_with("tenant/atlas")
         return requests[0]
+
+    def test_a_windows_1252_source_file_is_read_rather_than_failing_the_archive(self):
+        self.download(None, {
+            "src/Api/Startup.cs": "// Fran\xe7ois\nclass Startup {}".encode("cp1252"),
+            "src/Api/Controllers/OrdersController.cs": "\ufeffclass OrdersController {}".encode("utf-8"),
+        })
+        self.assertIn("François", self.sources["src/Api/Startup.cs"])
+        self.assertEqual("class OrdersController {}", self.sources["src/Api/Controllers/OrdersController.cs"])
 
     def test_the_tenants_token_downloads_through_the_api(self):
         request = self.download("installation-token")
