@@ -5,13 +5,11 @@ from __future__ import annotations
 import json
 import os
 import re
-import urllib.error
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from typing import Callable
 
-import github_app
+import github_archive
 import usage_ledger
 
 
@@ -212,32 +210,17 @@ def parse_input(user_input: str) -> dict[str, object]:
 def _download_selected_sources(location: SourceLocation, source_files: list[str], tenant: str | None = None) -> dict[str, str]:
     sources: dict[str, str] = {}
     total_bytes = 0
-    token = github_app.read_token(tenant)
-    for blob_url in source_files:
-        _, path = _validate_blob_url(blob_url, location)
-        url = (
-            f"https://raw.githubusercontent.com/{urllib.parse.quote(location.owner, safe='')}/"
-            f"{urllib.parse.quote(location.repository, safe='')}/{urllib.parse.quote(location.ref, safe='')}/"
-            f"{urllib.parse.quote(path, safe='/')}"
+    paths = [_validate_blob_url(blob_url, location)[1] for blob_url in source_files]
+    try:
+        # One archive download for the whole batch, rather than one API call per file.
+        files = github_archive.read_files(
+            location.owner, location.repository, location.ref, paths,
+            tenant=tenant, user_agent="service-dependency-generator", max_file_bytes=MAX_FILE_BYTES,
         )
-        headers = {"User-Agent": "service-dependency-generator"}
-        if token:
-            # The contents API accepts App installation tokens; raw.githubusercontent.com is for anonymous reads.
-            url = (
-                f"https://api.github.com/repos/{urllib.parse.quote(location.owner, safe='')}/"
-                f"{urllib.parse.quote(location.repository, safe='')}/contents/{urllib.parse.quote(path, safe='/')}"
-                f"?ref={urllib.parse.quote(location.ref, safe='')}"
-            )
-            headers["Authorization"] = f"Bearer {token}"
-            headers["Accept"] = "application/vnd.github.raw"
-        try:
-            request = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(request, timeout=30) as response:
-                content = response.read(MAX_FILE_BYTES + 1)
-        except urllib.error.HTTPError as error:
-            raise GenerationError("source_unavailable", f"GitHub returned HTTP {error.code} for {blob_url}.") from error
-        except urllib.error.URLError as error:
-            raise GenerationError("source_unavailable", f"Unable to download {blob_url}.") from error
+    except github_archive.ArchiveError as error:
+        raise GenerationError(error.code, str(error)) from error
+    for path in paths:
+        content = files[path]
         if len(content) > MAX_FILE_BYTES:
             raise GenerationError("source_too_large", f"Selected source file exceeds 512 KiB: {path}")
         total_bytes += len(content)

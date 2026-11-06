@@ -1,5 +1,7 @@
+import io
 import json
 import unittest
+import zipfile
 from unittest import mock
 
 import generator
@@ -145,33 +147,37 @@ class TenantTests(unittest.TestCase):
 class SourceDownloadTests(unittest.TestCase):
     def download(self, token):
         requests = []
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zipped:
+            zipped.writestr("owner-app-1a2b3c/src/App.cs", b"class Apply {}")
+            zipped.writestr("owner-app-1a2b3c/unrequested.txt", b"ignored")
 
         class Response:
+            headers = {"Content-Length": str(len(archive.getvalue()))}
             def __enter__(self): return self
             def __exit__(self, *args): return False
-            def read(self, size): return b"class Apply {}"
+            def read(self, size): return archive.getvalue()
 
         def urlopen(request, timeout):
             requests.append(request)
             return Response()
 
-        with mock.patch.object(generator.github_app, "read_token", return_value=token) as read_token, \
-                mock.patch.object(generator.urllib.request, "urlopen", side_effect=urlopen):
-            generator._download(generator.parse_source_url(SOURCE), ["src/App.cs"], "tenant/atlas")
+        with mock.patch.object(generator.github_archive.github_app, "read_token", return_value=token) as read_token, \
+                mock.patch.object(generator.github_archive.urllib.request, "urlopen", side_effect=urlopen):
+            sources = generator._download(generator.parse_source_url(SOURCE), ["src/App.cs"], "tenant/atlas")
         read_token.assert_called_once_with("tenant/atlas")
-        return requests[0]
+        self.assertEqual({"src/App.cs": "class Apply {}"}, sources)
+        return requests
 
-    def test_the_tenants_token_reads_through_the_contents_api(self):
-        request = self.download("installation-token")
-        self.assertEqual("https://api.github.com/repos/owner/app/contents/src/App.cs?ref=main", request.full_url)
-        self.assertEqual("Bearer installation-token", request.get_header("Authorization"))
-        self.assertEqual("application/vnd.github.raw", request.get_header("Accept"))
+    def test_the_tenants_token_downloads_one_archive_through_the_api(self):
+        requests = self.download("installation-token")
+        self.assertEqual(["https://api.github.com/repos/owner/app/zipball/main"], [request.full_url for request in requests])
+        self.assertEqual("Bearer installation-token", requests[0].get_header("Authorization"))
 
-    def test_without_a_token_the_raw_file_is_read(self):
-        request = self.download(None)
-        self.assertEqual("https://raw.githubusercontent.com/owner/app/main/src/App.cs", request.full_url)
-        self.assertIsNone(request.get_header("Authorization"))
-
+    def test_without_a_token_the_archive_is_read_from_codeload(self):
+        requests = self.download(None)
+        self.assertEqual(["https://codeload.github.com/owner/app/zip/main"], [request.full_url for request in requests])
+        self.assertIsNone(requests[0].get_header("Authorization"))
 
 if __name__ == "__main__":
     unittest.main()
