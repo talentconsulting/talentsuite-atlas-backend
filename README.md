@@ -157,6 +157,23 @@ For web repositories only. [`user-journeys-source-discovery`](agents/hosted/user
 }
 ```
 
+## Scanning a branch other than the default
+
+By default `path-to-scan` carries the branch as `tree/<branch>/<folder>`, and that branch must be the repository's default branch. To scan another branch -- for example one whose name contains `/`, such as `feature/funding-projection` -- give the node a `branch`, and `path-to-scan` is then just the folder within it (`""` for the repository root):
+
+```json
+{
+  "github-repo": "https://github.com/owner/application",
+  "dbschema": {
+    "branch": "feature/funding-projection",
+    "path-to-scan": "src",
+    "last-commit-hash-scanned": ""
+  }
+}
+```
+
+Each node names its own branch, so different flows can scan different branches of the same repository. The manifest orchestrators and `run-all-flows.yml` resolve the branch's head commit and point the workflow at `tree/<commit>/<folder>`, so the generated files record that commit as their `ref` and the scan matches the hash written to `last-commit-hash-scanned`.
+
 ## Run the complete workflow
 
 Invoke `openapi-spec-workflow` with:

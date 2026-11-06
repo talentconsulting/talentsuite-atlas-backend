@@ -11,7 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 import github_app
@@ -55,6 +55,17 @@ class ManifestEntry:
     last_commit: str
     in_progress_commit: str | None = None
     completed_files: int = 0
+    branch: str | None = None
+
+    def pinned(self, commit: str) -> "ManifestEntry":
+        """Points a named-branch entry at the commit just resolved for it.
+
+        A branch moves, and its name may contain "/", which the workflows' tree/ref[/path] URLs cannot carry,
+        so the workflows scan that exact commit instead. Entries without "branch" are unchanged.
+        """
+        if self.branch is None:
+            return self
+        return replace(self, ref=commit, path_to_scan="/".join(["tree", commit, *([self.scan_path] if self.scan_path else [])]))
 
     @property
     def source_url(self) -> str:
@@ -164,6 +175,38 @@ def _parse_repository(value: object, label: str) -> tuple[str, str, str]:
     return owner, repository, f"https://github.com/{owner}/{repository}"
 
 
+# Git forbids these in branch names; anything else (including "/") is allowed.
+BRANCH_PATTERN = re.compile(r"[^\s\\~^:?*\[]+")
+
+
+def _scan_location(node: dict[str, Any], path_to_scan: str, index: int) -> tuple[str, str, str | None]:
+    """Returns (ref, scan_path, branch) for a manifest node.
+
+    A node may name its branch in "branch", in which case "path-to-scan" is just the folder within it
+    ("" or "/" for the repository root). Without it, "path-to-scan" carries the ref as tree/ref[/path].
+    """
+    branch = node.get("branch")
+    if branch is not None:
+        if (
+            not isinstance(branch, str)
+            or not BRANCH_PATTERN.fullmatch(branch)
+            or branch.startswith("-")
+            or any(part in {"", ".", ".."} for part in branch.split("/"))
+        ):
+            raise ManifestError("invalid_manifest", f"Manifest entry {index}.branch must be a valid branch name.")
+        parts = [part for part in path_to_scan.split("/") if part]
+        if any(part in {".", ".."} or "\\" in part for part in parts):
+            raise ManifestError("invalid_manifest", f"Manifest entry {index}.path-to-scan must be a folder within the branch.")
+        return branch, "/".join(parts), branch
+    path_parts = [urllib.parse.unquote(part) for part in path_to_scan.strip("/").split("/")]
+    if len(path_parts) < 2 or path_parts[0] != "tree" or any(part in {"", ".", ".."} or "/" in part or "\\" in part for part in path_parts):
+        raise ManifestError(
+            "invalid_manifest",
+            f"Manifest entry {index}.path-to-scan must match tree/ref[/path], or be a folder when branch is set.",
+        )
+    return path_parts[1], "/".join(path_parts[2:]), None
+
+
 def validate_manifest(value: object, max_entries: int) -> tuple[list[ManifestEntry], list[str]]:
     if not isinstance(value, list):
         raise ManifestError("invalid_manifest", "The manifest root must be an array.")
@@ -182,18 +225,13 @@ def validate_manifest(value: object, max_entries: int) -> tuple[list[ManifestEnt
             raise ManifestError("invalid_manifest", f"Manifest entry {index} has an invalid shape.")
         specs = item["specs"]
         required_keys = {"path-to-scan", "last-commit-hash-scanned"}
-        if not isinstance(specs, dict) or not required_keys.issubset(specs) or not set(specs) <= required_keys | {"in-progress"}:
+        if not isinstance(specs, dict) or not required_keys.issubset(specs) or not set(specs) <= required_keys | {"in-progress", "branch"}:
             raise ManifestError("invalid_manifest", f"Manifest entry {index}.specs has an invalid shape.")
         owner, repository, repository_url = _parse_repository(item["github-repo"], f"Manifest entry {index}.github-repo")
         path_to_scan = specs["path-to-scan"]
         if not isinstance(path_to_scan, str):
             raise ManifestError("invalid_manifest", f"Manifest entry {index}.path-to-scan must be a string.")
-        path_parts = [urllib.parse.unquote(part) for part in path_to_scan.strip("/").split("/")]
-        if len(path_parts) < 2 or path_parts[0] != "tree" or any(part in {"", ".", ".."} or "/" in part or "\\" in part for part in path_parts):
-            raise ManifestError(
-                "invalid_manifest",
-                f"Manifest entry {index}.path-to-scan must match tree/ref[/path].",
-            )
+        ref, scan_path, branch = _scan_location(specs, path_to_scan, index)
         last_commit = specs["last-commit-hash-scanned"]
         if not isinstance(last_commit, str) or (last_commit and not COMMIT_PATTERN.fullmatch(last_commit)):
             raise ManifestError(
@@ -228,9 +266,10 @@ def validate_manifest(value: object, max_entries: int) -> tuple[list[ManifestEnt
                 owner=owner,
                 repository=repository,
                 repository_url=repository_url,
-                ref=path_parts[1],
-                scan_path="/".join(path_parts[2:]),
-                path_to_scan="/".join(path_parts),
+                ref=ref,
+                scan_path=scan_path,
+                path_to_scan="/".join(["tree", ref, *([scan_path] if scan_path else [])]),
+                branch=branch,
                 last_commit=last_commit,
                 in_progress_commit=in_progress_commit,
                 completed_files=completed_files,
@@ -258,7 +297,7 @@ def _default_branch(entry: ManifestEntry, token: str | None = None) -> str:
 def latest_commit(entry: ManifestEntry, tenant: str | None = None) -> str:
     token = github_app.read_token(tenant)
     default_branch = _default_branch(entry, token)
-    if entry.ref != default_branch:
+    if entry.branch is None and entry.ref != default_branch:
         raise ManifestError(
             "invalid_manifest",
             f"Manifest entry for {entry.repository_name} scans ref {entry.ref!r}, but the repository's "
@@ -435,7 +474,7 @@ def run_manifest(
             if commit == entry.last_commit:
                 up_to_date.append({"repository": entry.repository_name, "commit": commit})
             else:
-                changed.append((entry, commit))
+                changed.append((entry.pinned(commit), commit))
         except Exception as error:
             failures.append(
                 {

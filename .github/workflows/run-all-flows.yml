@@ -170,6 +170,8 @@ jobs:
         shell: bash
         env:
           SOURCE_URL: ${{ matrix.source_url }}
+          SCAN_BRANCH: ${{ matrix.branch }}
+          SCAN_PATH: ${{ matrix.scan_path }}
           TARGET_REPOSITORY: ${{ needs.prepare.outputs.target_repository }}
           TARGET_BASE_BRANCH: ${{ needs.prepare.outputs.target_base_branch }}
           DEFER_PUBLICATION: ${{ inputs.defer_publication }}
@@ -180,17 +182,27 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # The commit is resolved before the scan starts; a commit pushed during the run is picked up by the next one.
+          # A named branch ("branch" in the manifest node) arrives percent-encoded in SOURCE_URL.
+          commit=""
+          if [[ "$SOURCE_URL" =~ ^https://github\.com/([^/]+)/([^/]+)/tree/([^/]+) ]]; then
+            commit=$(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${BASH_REMATCH[1]}/${BASH_REMATCH[2]}/commits/${BASH_REMATCH[3]}" \
+              | jq -r '.sha // empty') || commit=""
+          fi
+          if [ -n "$SCAN_BRANCH" ]; then
+            # A branch moves and its name may contain "/", which the workflows' tree/ref[/path] URLs cannot
+            # carry, so the workflow scans the commit just resolved, as the manifest orchestrators do.
+            if [[ ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::${{ matrix.key }}: could not resolve the head commit of branch $SCAN_BRANCH."
+              exit 1
+            fi
+            SOURCE_URL="${SOURCE_URL%%/tree/*}/tree/$commit${SCAN_PATH:+/$SCAN_PATH}"
+          fi
           # Record the scanned commit in the same pull request, as the manifest orchestrators do, so the
-          # next scheduled run does not rescan this repository. The commit is resolved before the scan
-          # starts; a commit pushed during the run is picked up by the next one.
+          # next scheduled run does not rescan this repository.
           manifest_update='{}'
           if [ "$DEFER_PUBLICATION" != "true" ]; then
-            commit=""
-            if [[ "$SOURCE_URL" =~ ^https://github\.com/([^/]+)/([^/]+)/tree/([^/]+) ]]; then
-              commit=$(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${BASH_REMATCH[1]}/${BASH_REMATCH[2]}/commits/${BASH_REMATCH[3]}" \
-                | jq -r '.sha // empty') || commit=""
-            fi
             if [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
               echo "Recording $commit as ${MANIFEST_NODE}'s last-commit-hash-scanned."
               manifest_update=$(printf '%s' "$MANIFEST" | jq -c --arg repo "$GITHUB_REPO_INPUT" --arg node "$MANIFEST_NODE" \
