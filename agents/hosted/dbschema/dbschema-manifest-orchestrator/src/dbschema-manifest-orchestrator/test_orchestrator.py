@@ -3,6 +3,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
+import orchestrator
 from orchestrator import ManifestEntry, ManifestError, latest_commit, parse_blob_url, parse_request, run_manifest, validate_manifest
 
 
@@ -502,6 +503,58 @@ class SessionCleanupTests(unittest.TestCase):
         project, _ = self._project(RuntimeError("forbidden"))
         with self.assertLogs(subject.__name__, level="WARNING"):
             self.assertEqual(subject.invoke_agent(project, "worker", "model", {}, max_attempts=1), {"ok": True})
+
+
+class NamedBranchTests(unittest.TestCase):
+    BRANCH_SHA = "a" * 40
+
+    def entry(self, **node):
+        node = {"path-to-scan": "src", "last-commit-hash-scanned": "", **node}
+        entries, _ = orchestrator.validate_manifest([{"github-repo": "https://github.com/source/app", "dbschema": node}], 25)
+        return entries[0]
+
+    def test_a_named_branch_makes_path_to_scan_a_folder_within_it(self):
+        entry = self.entry(branch="feature/funding-projection")
+
+        self.assertEqual(("feature/funding-projection", "src", "feature/funding-projection"), (entry.ref, entry.scan_path, entry.branch))
+
+    def test_a_named_branch_can_scan_the_repository_root(self):
+        entry = self.entry(branch="develop", **{"path-to-scan": ""})
+
+        self.assertEqual("", entry.scan_path)
+        self.assertEqual(f"https://github.com/source/app/tree/{self.BRANCH_SHA}", entry.pinned(self.BRANCH_SHA).source_url)
+
+    def test_the_workflow_scans_the_commit_resolved_for_a_named_branch(self):
+        pinned = self.entry(branch="feature/funding-projection").pinned(self.BRANCH_SHA)
+
+        self.assertEqual(f"https://github.com/source/app/tree/{self.BRANCH_SHA}/src", pinned.source_url)
+        self.assertEqual(self.BRANCH_SHA, pinned.ref)
+
+    def test_an_entry_without_a_branch_is_unchanged_when_pinned(self):
+        entry = self.entry(**{"path-to-scan": "tree/main/src"})
+
+        self.assertIs(entry, entry.pinned(self.BRANCH_SHA))
+        self.assertEqual("https://github.com/source/app/tree/main/src", entry.source_url)
+
+    def test_an_invalid_branch_name_is_rejected(self):
+        for branch in ("has space", "", "a//b", "-flag", "../up", 7):
+            with self.subTest(branch=branch), self.assertRaises(orchestrator.ManifestError):
+                self.entry(branch=branch)
+
+    def test_a_named_branch_is_not_held_to_the_default_branch(self):
+        entry = self.entry(branch="feature/funding-projection")
+        requested = []
+
+        def fake_read_url(url, token=None, accept=None):
+            requested.append(url)
+            if url == "https://api.github.com/repos/source/app":
+                return json.dumps({"default_branch": "main"}).encode("utf-8")
+            if url == "https://api.github.com/repos/source/app/commits/feature%2Ffunding-projection":
+                return json.dumps({"sha": self.BRANCH_SHA}).encode("utf-8")
+            raise AssertionError(f"unexpected URL {url}")
+
+        with patch("orchestrator._read_url", side_effect=fake_read_url):
+            self.assertEqual(self.BRANCH_SHA, orchestrator.latest_commit(entry))
 
 
 if __name__ == "__main__":

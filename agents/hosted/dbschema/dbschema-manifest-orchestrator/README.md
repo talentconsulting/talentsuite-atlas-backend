@@ -28,7 +28,7 @@ The manifest must use this schema:
 ]
 ```
 
-`path-to-scan` supplies both the branch and path. The agent compares `last-commit-hash-scanned` with the current head of that branch. The manifest may be shared with the OpenAPI pipeline: unrelated nodes are ignored, and entries without `dbschema` are skipped. The legacy `db-schema` key remains supported for existing manifests, but an entry cannot contain both keys. Manifest and source reads are currently restricted to public, credential-free GitHub URLs.
+`path-to-scan` supplies both the branch and path, unless the node names a `branch`, in which case it is just the folder within that branch (see "Scanning a branch other than the default" in the root README). The agent compares `last-commit-hash-scanned` with the current head of that branch. The manifest may be shared with the OpenAPI pipeline: unrelated nodes are ignored, and entries without `dbschema` are skipped. The legacy `db-schema` key remains supported for existing manifests, but an entry cannot contain both keys. Manifest and source reads are currently restricted to public, credential-free GitHub URLs.
 
 ## Behavior
 

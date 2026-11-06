@@ -31,7 +31,16 @@ def flowdefs: {
              agent: $f.value.agent,
              project_dir: $f.value.project_dir,
              node: $match.key,
-             source_url: (($entry["github-repo"] | rtrimstr("/")) + "/" + $match.value["path-to-scan"])
+             # With "branch", path-to-scan is a folder within it, and the branch (which may contain "/") is
+             # percent-encoded into the URL; the run step swaps it for the branch's head commit.
+             branch: ($match.value.branch // ""),
+             scan_path: (if $match.value.branch then ($match.value["path-to-scan"] | split("/") | map(select(. != "")) | join("/")) else "" end),
+             source_url: (($entry["github-repo"] | rtrimstr("/")) + "/"
+               + (if $match.value.branch
+                  then "tree/" + ($match.value.branch | @uri)
+                    + ($match.value["path-to-scan"] | split("/") | map(select(. != "")) | join("/") | if . == "" then "" else "/" + . end)
+                  else $match.value["path-to-scan"]
+                  end))
            }
        )) as $matrix
     | if ($matrix | length) == 0 then
