@@ -324,6 +324,17 @@ def _merge_manifest(existing: bytes | None, manifest: dict[str, Any]) -> bytes:
     return (json.dumps(current, indent=2) + "\n").encode("utf-8")
 
 
+def _tree_entry(github: GitHubClient, repository: str, item: Any) -> dict[str, str]:
+    """Generated text goes inline in the tree request, so a pull request costs one call however many
+    files it writes, rather than one blob call per file against the App's hourly API limit. Content
+    that is not UTF-8 still goes through a blob, since a tree's inline content must be text."""
+    try:
+        return {"path": item.path, "mode": "100644", "type": "blob", "content": item.content.decode("utf-8")}
+    except UnicodeDecodeError:
+        blob = github.request("POST", f"/repos/{repository}/git/blobs", {"content": base64.b64encode(item.content).decode("ascii"), "encoding": "base64"})
+        return {"path": item.path, "mode": "100644", "type": "blob", "sha": blob["sha"]}
+
+
 def publish(payload: dict[str, Any], client: GitHubClient | None = None, branch_factory: Callable[[], str] = default_branch_name) -> dict[str, Any]:
     request = validate_request(payload)
     repository = request["repository"]
@@ -370,10 +381,7 @@ def publish(payload: dict[str, Any], client: GitHubClient | None = None, branch_
         base_tree = commit["tree"]["sha"]
     except (KeyError, TypeError) as error:
         raise PublicationError("github_api_error", "GitHub returned an invalid base commit.") from error
-    tree_items = []
-    for item in changed:
-        blob = github.request("POST", f"/repos/{repository}/git/blobs", {"content": base64.b64encode(item.content).decode("ascii"), "encoding": "base64"})
-        tree_items.append({"path": item.path, "mode": "100644", "type": "blob", "sha": blob["sha"]})
+    tree_items = [_tree_entry(github, repository, item) for item in changed]
     tree = github.request("POST", f"/repos/{repository}/git/trees", {"base_tree": base_tree, "tree": tree_items})
     new_commit = github.request("POST", f"/repos/{repository}/git/commits", {
         "message": "Update generated database schemas", "tree": tree["sha"], "parents": [base_sha]

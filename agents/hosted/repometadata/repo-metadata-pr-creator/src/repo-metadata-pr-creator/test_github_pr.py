@@ -1,8 +1,10 @@
 import base64
 import json
+import types
 import unittest
 from unittest.mock import patch
 
+import github_pr
 from github_pr import PublicationError, parse_request, publish, validate_request
 
 
@@ -197,6 +199,34 @@ class WriteTokenTests(unittest.TestCase):
                 publish(payload())
         write_token.assert_called_once_with(payload()["repository"])
         client.assert_called_once_with("installation-token")
+
+
+class TreeEntryTests(unittest.TestCase):
+    class RecordingClient:
+        def __init__(self):
+            self.calls = []
+
+        def request(self, method, path, body=None):
+            self.calls.append((method, path))
+            return {"sha": "blob-sha"}
+
+    def test_text_goes_inline_in_the_tree_without_a_blob_call(self):
+        client = self.RecordingClient()
+        item = types.SimpleNamespace(path="app/file.json", content='{"name": "café"}'.encode("utf-8"))
+
+        entry = github_pr._tree_entry(client, "target/catalogue", item)
+
+        self.assertEqual({"path": "app/file.json", "mode": "100644", "type": "blob", "content": '{"name": "café"}'}, entry)
+        self.assertEqual([], client.calls)
+
+    def test_content_that_is_not_utf8_still_goes_through_a_blob(self):
+        client = self.RecordingClient()
+        item = types.SimpleNamespace(path="app/file.bin", content=b"\xff\xfe")
+
+        entry = github_pr._tree_entry(client, "target/catalogue", item)
+
+        self.assertEqual({"path": "app/file.bin", "mode": "100644", "type": "blob", "sha": "blob-sha"}, entry)
+        self.assertEqual([("POST", "/repos/target/catalogue/git/blobs")], client.calls)
 
 
 if __name__ == "__main__":
