@@ -1,5 +1,7 @@
+import io
 import json
 import unittest
+import zipfile
 from unittest import mock
 
 import generator
@@ -279,33 +281,37 @@ class TenantTests(unittest.TestCase):
 class SourceDownloadTests(unittest.TestCase):
     def download(self, token):
         requests = []
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zipped:
+            zipped.writestr("source-catalog-1a2b3c/src/docker-compose.yml", b"services: {}")
+            zipped.writestr("source-catalog-1a2b3c/unrequested.txt", b"ignored")
 
         class Response:
+            headers = {"Content-Length": str(len(archive.getvalue()))}
             def __enter__(self): return self
             def __exit__(self, *args): return False
-            def read(self, size): return b"services: {}"
+            def read(self, size): return archive.getvalue()
 
         def urlopen(request, timeout):
             requests.append(request)
             return Response()
 
-        with mock.patch.object(generator.github_app, "read_token", return_value=token) as read_token, \
-                mock.patch.object(generator.urllib.request, "urlopen", side_effect=urlopen):
-            generator._download_selected_sources(parse_source_url(SOURCE_URL), [FILE_COMPOSE], "tenant/atlas")
+        with mock.patch.object(generator.github_archive.github_app, "read_token", return_value=token) as read_token, \
+                mock.patch.object(generator.github_archive.urllib.request, "urlopen", side_effect=urlopen):
+            sources = generator._download_selected_sources(parse_source_url(SOURCE_URL), [FILE_COMPOSE], "tenant/atlas")
         read_token.assert_called_once_with("tenant/atlas")
-        return requests[0]
+        self.assertEqual({"src/docker-compose.yml": b"services: {}".decode("utf-8")}, sources)
+        return requests
 
-    def test_the_tenants_token_reads_through_the_contents_api(self):
-        request = self.download("installation-token")
-        self.assertEqual("https://api.github.com/repos/source/catalog/contents/src/docker-compose.yml?ref=main", request.full_url)
-        self.assertEqual("Bearer installation-token", request.get_header("Authorization"))
-        self.assertEqual("application/vnd.github.raw", request.get_header("Accept"))
+    def test_the_tenants_token_downloads_one_archive_through_the_api(self):
+        requests = self.download("installation-token")
+        self.assertEqual(["https://api.github.com/repos/source/catalog/zipball/main"], [request.full_url for request in requests])
+        self.assertEqual("Bearer installation-token", requests[0].get_header("Authorization"))
 
-    def test_without_a_token_the_raw_file_is_read(self):
-        request = self.download(None)
-        self.assertEqual("https://raw.githubusercontent.com/source/catalog/main/src/docker-compose.yml", request.full_url)
-        self.assertIsNone(request.get_header("Authorization"))
-
+    def test_without_a_token_the_archive_is_read_from_codeload(self):
+        requests = self.download(None)
+        self.assertEqual(["https://codeload.github.com/source/catalog/zip/main"], [request.full_url for request in requests])
+        self.assertIsNone(requests[0].get_header("Authorization"))
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,7 @@
+import io
 import json
 import unittest
+import zipfile
 from unittest import mock
 
 import generator
@@ -281,36 +283,47 @@ class TenantTests(unittest.TestCase):
 
 
 class SourceDownloadTests(unittest.TestCase):
-    def download(self, token):
+    def download(self, token, files=FILES):
         requests = []
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zipped:
+            zipped.writestr("source-app-1a2b3c/src/Clients/AccountsClient.cs", "class AccountsClient {}")
+            zipped.writestr("source-app-1a2b3c/src/Clients/LedgerClient.cs", "class LedgerClient {}")
 
         class Response:
+            headers = {"Content-Length": str(len(archive.getvalue()))}
             def __enter__(self): return self
             def __exit__(self, *args): return False
-            def read(self, size): return b"class AccountsClient {}"
+            def read(self, size): return archive.getvalue()
 
         def urlopen(request, timeout):
             requests.append(request)
             return Response()
 
-        with mock.patch.object(generator.github_app, "read_token", return_value=token) as read_token, \
-                mock.patch.object(generator.urllib.request, "urlopen", side_effect=urlopen):
-            generator._download_selected_sources(generator.parse_source_url(SOURCE), FILES, "tenant/atlas")
+        with mock.patch.object(generator.github_archive.github_app, "read_token", return_value=token) as read_token, \
+                mock.patch.object(generator.github_archive.urllib.request, "urlopen", side_effect=urlopen):
+            sources = generator._download_selected_sources(generator.parse_source_url(SOURCE), files, "tenant/atlas")
         read_token.assert_called_once_with("tenant/atlas")
-        return requests[0]
+        return requests, sources
 
-    def test_the_tenants_token_reads_through_the_contents_api(self):
-        request = self.download("installation-token")
-        self.assertEqual("https://api.github.com/repos/source/app/contents/src/Clients/AccountsClient.cs?ref=main",
-                         request.full_url)
-        self.assertEqual("Bearer installation-token", request.get_header("Authorization"))
-        self.assertEqual("application/vnd.github.raw", request.get_header("Accept"))
+    def test_the_tenants_token_downloads_one_archive_through_the_api(self):
+        files = FILES + ["https://github.com/source/app/blob/main/src/Clients/LedgerClient.cs"]
+        requests, sources = self.download("installation-token", files)
+        self.assertEqual(["https://api.github.com/repos/source/app/zipball/main"], [request.full_url for request in requests])
+        self.assertEqual("Bearer installation-token", requests[0].get_header("Authorization"))
+        self.assertEqual(
+            {"src/Clients/AccountsClient.cs": "class AccountsClient {}", "src/Clients/LedgerClient.cs": "class LedgerClient {}"},
+            sources,
+        )
 
-    def test_without_a_token_the_raw_file_is_read(self):
-        request = self.download(None)
-        self.assertEqual("https://raw.githubusercontent.com/source/app/main/src/Clients/AccountsClient.cs", request.full_url)
-        self.assertIsNone(request.get_header("Authorization"))
+    def test_without_a_token_the_archive_is_read_from_codeload(self):
+        requests, _ = self.download(None)
+        self.assertEqual(["https://codeload.github.com/source/app/zip/main"], [request.full_url for request in requests])
+        self.assertIsNone(requests[0].get_header("Authorization"))
 
+    def test_a_file_missing_from_the_archive_is_unavailable(self):
+        with self.assertRaisesRegex(GenerationError, "src/Clients/Missing.cs is not in the repository"):
+            self.download(None, ["https://github.com/source/app/blob/main/src/Clients/Missing.cs"])
 
 if __name__ == "__main__":
     unittest.main()

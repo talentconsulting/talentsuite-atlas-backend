@@ -11,13 +11,11 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.error
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from typing import Callable
 
-import github_app
+import github_archive
 import usage_ledger
 
 
@@ -173,23 +171,16 @@ def parse_input(user_input: str) -> dict:
 
 def _download(location: SourceLocation, paths: list[str], tenant: str | None = None) -> dict[str, str]:
     sources, total = {}, 0
-    owner, repository, ref = (urllib.parse.quote(value, safe="") for value in (location.owner, location.repository, location.ref))
-    token = github_app.read_token(tenant)
+    try:
+        # One archive download for the whole batch, rather than one API call per file.
+        files = github_archive.read_files(
+            location.owner, location.repository, location.ref, paths,
+            tenant=tenant, user_agent="user-journeys-generator", max_file_bytes=MAX_FILE_BYTES,
+        )
+    except github_archive.ArchiveError as error:
+        raise GenerationError(error.code, str(error)) from error
     for path in paths:
-        url = f"https://raw.githubusercontent.com/{owner}/{repository}/{ref}/{urllib.parse.quote(path, safe='/')}"
-        headers = {"User-Agent": "user-journeys-generator"}
-        if token:
-            # The contents API accepts App installation tokens; raw.githubusercontent.com is for anonymous reads.
-            url = f"https://api.github.com/repos/{owner}/{repository}/contents/{urllib.parse.quote(path, safe='/')}?ref={ref}"
-            headers["Authorization"] = f"Bearer {token}"
-            headers["Accept"] = "application/vnd.github.raw"
-        try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as response:
-                content = response.read(MAX_FILE_BYTES + 1)
-        except urllib.error.HTTPError as error:
-            raise GenerationError("source_unavailable", f"GitHub returned HTTP {error.code} for {path}.") from error
-        except urllib.error.URLError as error:
-            raise GenerationError("source_unavailable", f"Unable to download {path}.") from error
+        content = files[path]
         if len(content) > MAX_FILE_BYTES:
             raise GenerationError("source_too_large", f"Source file exceeds 512 KiB: {path}")
         total += len(content)

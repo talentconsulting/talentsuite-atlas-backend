@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import github_app
+import github_archive
 
 
 MAX_SOURCE_FILES = 100
@@ -106,24 +107,16 @@ def parse_input(user_input: str) -> dict[str, Any]:
 def _download_selected_sources(location: SourceLocation, paths: list[str], tenant: str | None = None) -> dict[str, str]:
     sources: dict[str, str] = {}
     total_bytes = 0
-    owner, repository, ref = (urllib.parse.quote(value, safe="") for value in (location.owner, location.repository, location.ref))
-    token = github_app.read_token(tenant)
+    try:
+        # One archive download for the whole batch, rather than one API call per file.
+        files = github_archive.read_files(
+            location.owner, location.repository, location.ref, paths,
+            tenant=tenant, user_agent="repo-metadata-generator", max_file_bytes=MAX_FILE_BYTES,
+        )
+    except github_archive.ArchiveError as error:
+        raise GenerationError("source_download_failed" if error.code == "source_unavailable" else error.code, str(error)) from error
     for path in paths:
-        url = f"https://raw.githubusercontent.com/{owner}/{repository}/{ref}/{urllib.parse.quote(path, safe='/')}"
-        headers = {"User-Agent": "repo-metadata-generator"}
-        if token:
-            # The contents API accepts App installation tokens; raw.githubusercontent.com is for anonymous reads.
-            url = f"https://api.github.com/repos/{owner}/{repository}/contents/{urllib.parse.quote(path, safe='/')}?ref={ref}"
-            headers["Authorization"] = f"Bearer {token}"
-            headers["Accept"] = "application/vnd.github.raw"
-        try:
-            request = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(request, timeout=30) as response:
-                body = response.read(MAX_FILE_BYTES + 1)
-        except urllib.error.HTTPError as error:
-            raise GenerationError("source_download_failed", f"GitHub returned HTTP {error.code} for {path}.") from error
-        except urllib.error.URLError as error:
-            raise GenerationError("source_download_failed", f"Unable to download {path}.") from error
+        body = files[path]
         if len(body) > MAX_FILE_BYTES:
             raise GenerationError("source_too_large", f"{path} exceeds the 512 KiB per-file limit.")
         total_bytes += len(body)
