@@ -236,6 +236,57 @@ class GeneratorTests(unittest.TestCase):
             "IProviderPaymentApiClient": ["ProviderEventsApiConfiguration"],
         }, clients)
 
+    def test_registered_clients_add_the_api_configuration_their_implementation_reads(self):
+        sources = {
+            "src/Registrations.cs": "services.AddTransient<IOuterApiClient, OuterApiClient>();",
+            "src/OuterApiClient.cs": """
+                using SFA.DAS.ProviderCommitments.Api;
+                public class OuterApiClient : IOuterApiClient
+                {
+                    public OuterApiClient(IHttpClientFactory factory, ApprovalsOuterApiConfiguration config, ILogger<OuterApiClient> logger)
+                    {
+                        _httpClient = factory.CreateClient();
+                        _httpClient.BaseAddress = new Uri(config.ApiBaseUrl);
+                    }
+                }
+            """,
+        }
+
+        clients = generator.registered_clients(sources)
+
+        self.assertEqual([{
+            "interface": "IOuterApiClient",
+            "files": ["src/OuterApiClient.cs", "src/Registrations.cs"],
+            "configurationTypes": ["ApprovalsOuterApiConfiguration"],
+        }], clients)
+        self.assertEqual([], generator.configured_http_clients(sources, clients))
+
+    def test_configured_http_clients_lists_api_configuration_that_builds_a_client_by_hand(self):
+        sources = {
+            "src/ServiceCollectionExtensions.cs": """
+                serviceCollection.AddTransient<IEmploymentCheckService>(s =>
+                {
+                    var settings = s.GetService<IOptions<EmployerIncentivesOuterApi>>().Value;
+                    var client = new HttpClientBuilder().WithApimAuthorisationHeader(settings).Build();
+                    client.BaseAddress = new Uri(settings.ApiBaseUrl);
+                    return new EmploymentCheckService(client);
+                });
+            """,
+            "src/Handler.cs": "public Handler(IOptions<CampaignApiConfiguration> config) { }",
+        }
+
+        self.assertEqual(
+            [{"configurationType": "EmployerIncentivesOuterApi", "files": ["src/ServiceCollectionExtensions.cs"]}],
+            generator.configured_http_clients(sources, []),
+        )
+
+    def test_the_prompt_lists_configured_http_clients(self):
+        location = generator.parse_source_url("https://github.com/source/app/tree/main/src")
+
+        prompt = generator.source_prompt(location, {"src/A.cs": "var c = new HttpClient { BaseAddress = new Uri(cfg.Url) }; // RoatpApiConfiguration"})
+
+        self.assertIn('"configurationType":"RoatpApiConfiguration"', prompt)
+
     def test_the_prompt_lists_registered_clients_as_a_checklist(self):
         location = generator.parse_source_url("https://github.com/source/app/tree/main/src")
 

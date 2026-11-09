@@ -277,11 +277,34 @@ def _download_selected_sources(location: SourceLocation, source_files: list[str]
 CLIENT_REGISTRATION_RE = re.compile(r"\bAdd\w*\s*<\s*(I[A-Z]\w*Client)\b(?:\s*<\s*(\w+)\s*>)?")
 
 
+# A type that configures an API: ...Api, ...ApiConfiguration, ...ApiClientConfiguration, ...ApiSettings or
+# ...ApiOptions (for example ApprovalsOuterApiConfiguration or EmployerIncentivesOuterApi). Member access
+# (config.Value.OuterApi) and namespaces are excluded by the lookbehind and by skipping using/namespace lines.
+API_CONFIGURATION_TYPE_RE = re.compile(r"(?<![\w.])([A-Z]\w*Api(?:Client)?(?:Configuration|Settings|Options)?)\b")
+# Where an HTTP client is built or pointed at its API.
+HTTP_CLIENT_SETUP_RE = re.compile(
+    r"\b(?:BaseAddress|ApiBaseUrl|BaseUrl|HttpClientBuilder|CreateClient|AddHttpClient|new\s+HttpClient)\b"
+)
+
+
+def _api_configuration_types(content: str) -> set[str]:
+    """The API configuration types a file that builds an HTTP client reads."""
+    if not HTTP_CLIENT_SETUP_RE.search(content):
+        return set()
+    code = "\n".join(line for line in content.splitlines() if not line.lstrip().startswith(("using ", "namespace ")))
+    return {
+        name for name in API_CONFIGURATION_TYPE_RE.findall(code)
+        if not name.endswith("Client") and not re.match(r"I[A-Z]", name)
+    }
+
+
 def registered_clients(sources: dict[str, str]) -> list[dict[str, object]]:
     """Every client interface a bundle file registers, with the configuration types it is registered with.
 
     The model reliably reports some of a registration file's clients but not all of them, and which ones it
-    drops varies between runs, so these are listed in the prompt as a checklist it must account for.
+    drops varies between runs, so these are listed in the prompt as a checklist it must account for. When the
+    client's implementation is in the bundle, the API configuration types it reads are added too, since a
+    registration often names no configuration at all (AddTransient<IOuterApiClient, OuterApiClient>()).
     """
     found: dict[str, dict[str, set[str]]] = {}
     for path, content in sources.items():
@@ -294,10 +317,30 @@ def registered_clients(sources: dict[str, str]) -> list[dict[str, object]]:
             for name in ([match.group(2)] if match.group(2) else []) + re.findall(r"\b(\w+Configuration)\b", type_arguments):
                 if name.endswith("Configuration"):
                     entry["configurationTypes"].add(name)
+    for interface, entry in found.items():
+        implementation = re.compile(r"\bclass\s+\w+(?:\s*<[^>{]*>)?\s*:[^{]*\b" + re.escape(interface) + r"\b")
+        for path, content in sources.items():
+            if implementation.search(content):
+                entry["files"].add(path)
+                entry["configurationTypes"].update(_api_configuration_types(content))
     return [
         {"interface": name, "files": sorted(value["files"]), "configurationTypes": sorted(value["configurationTypes"])}
         for name, value in sorted(found.items())
     ]
+
+
+def configured_http_clients(sources: dict[str, str], clients: list[dict[str, object]]) -> list[dict[str, object]]:
+    """API configuration types that build an HTTP client but aren't already listed against a registered client.
+
+    These catch clients built by hand (a factory, or an AddTransient<IService>(s => ...) lambda reading
+    IOptions<EmployerIncentivesOuterApi>), and implementations whose registration is in another batch.
+    """
+    listed = {name for client in clients for name in client["configurationTypes"]}
+    found: dict[str, set[str]] = {}
+    for path, content in sources.items():
+        for name in _api_configuration_types(content) - listed:
+            found.setdefault(name, set()).add(path)
+    return [{"configurationType": name, "files": sorted(files)} for name, files in sorted(found.items())]
 
 
 def source_prompt(location: SourceLocation, sources: dict[str, str]) -> str:
@@ -315,8 +358,17 @@ def source_prompt(location: SourceLocation, sources: dict[str, str]) -> str:
         prompt += (
             "\n\nThese client interfaces are registered in the bundle. Report a dependency for each one -- named by "
             "the naming rules, with its configuration types in configurationKeys -- unless the file shows it is not "
-            "an outbound call (for example an in-process helper):\n"
+            "an outbound call (for example an in-process helper). These lists are not exhaustive: still report every "
+            "other dependency the files show:\n"
             + json.dumps(clients, separators=(",", ":"))
+        )
+    configured = configured_http_clients(sources, clients)
+    if configured:
+        prompt += (
+            "\n\nThese API configuration types are used to build an HTTP client in the named files. Report the API "
+            "each one calls as an http-api dependency with the configuration type in configurationKeys -- merged into "
+            "the matching client above when it is the same API -- unless the file shows it is not an outbound call:\n"
+            + json.dumps(configured, separators=(",", ":"))
         )
     return prompt
 
