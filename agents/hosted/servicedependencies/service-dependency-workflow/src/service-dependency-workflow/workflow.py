@@ -399,11 +399,24 @@ def catalog_to_puml(catalog: dict[str, Any]) -> str:
 SPLITTABLE_ERRORS = {"model_output_truncated", "invalid_model_output"}
 
 
+# Entry points sent with every batch, so the generator can always name the containers and attribute each
+# dependency to one: a batch that happens to hold only library files (das-learning's last batch was its
+# Types project alone) otherwise has no container and fails the whole catalog.
+ENTRY_POINT_FILENAMES = {"program.cs", "startup.cs"}
+MAX_ENTRY_POINTS = 12
+
+
+def entry_points(files: list[str]) -> list[str]:
+    return [file for file in files if file.rsplit("/", 1)[-1].lower() in ENTRY_POINT_FILENAMES][:MAX_ENTRY_POINTS]
+
+
 def _generate_batch(
     project: Any, generator_name: str, model: str, source_url: str, batch: list[str], invoker: Callable[..., Any],
-    tenant: str | None = None,
+    tenant: str | None = None, context: list[str] | None = None,
 ) -> dict[str, Any]:
-    payload = {"sourceUrl": source_url, "sourceFiles": batch, **({"tenant": tenant} if tenant else {})}
+    context = context or []
+    source_files = context + [file for file in batch if file not in context]
+    payload = {"sourceUrl": source_url, "sourceFiles": source_files, **({"tenant": tenant} if tenant else {})}
     last_error: Exception | None = None
     for _ in range(2):
         try:
@@ -418,7 +431,7 @@ def _generate_batch(
         # a catalog longer than one model response, so halve the batch until each half's catalog fits.
         middle = len(batch) // 2
         return merge_catalogs([
-            _generate_batch(project, generator_name, model, source_url, half, invoker, tenant)
+            _generate_batch(project, generator_name, model, source_url, half, invoker, tenant, context)
             for half in (batch[:middle], batch[middle:])
         ])
     raise last_error
@@ -470,13 +483,17 @@ def run_workflow(
         files = discovered["sourceFiles"]
         owner, repository, ref, path = parse_source_url(source_url)
         if files:
-            batches = [files[index:index + max(1, generator_batch_size)] for index in range(0, len(files), max(1, generator_batch_size))]
+            context = entry_points(files)
+            rest = [file for file in files if file not in context]
+            size = max(1, generator_batch_size)
+            # The entry points travel with every batch; with nothing else to scan they are one batch of their own.
+            batches = [rest[index:index + size] for index in range(0, len(rest), size)] or [[]]
             catalogs = []
             # Each batch is an independent, blocking LLM call -- run them concurrently (bounded) instead
             # of one at a time, since the deployment's throughput quota is far above what one repo needs.
             with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(max_concurrency, len(batches)))) as executor:
                 future_to_batch = {
-                    executor.submit(_generate_batch, project, generator_name, model, source_url, batch, invoker, request.get("tenant")): batch
+                    executor.submit(_generate_batch, project, generator_name, model, source_url, batch, invoker, request.get("tenant"), context): batch
                     for batch in batches
                 }
                 for future in concurrent.futures.as_completed(future_to_batch):
