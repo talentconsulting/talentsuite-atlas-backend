@@ -200,7 +200,7 @@ class GeneratorTests(unittest.TestCase):
 
     def test_the_prompt_asks_for_platform_dependencies_and_queue_names(self):
         for phrase in ("configuration-store", "telemetry", "identity-provider", "type is queue, topic, or subscription",
-                       "method is SEND, PUBLISH, or RECEIVE"):
+                       "method is SEND, PUBLISH, or RECEIVE", "[ServiceBusTrigger(...)]"):
             self.assertIn(phrase, generator.SYSTEM_INSTRUCTIONS)
 
     def test_a_response_cut_off_at_the_output_limit_is_reported_as_truncated(self):

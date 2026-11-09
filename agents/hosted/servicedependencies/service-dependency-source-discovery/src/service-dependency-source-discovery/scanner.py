@@ -94,7 +94,8 @@ DATABASE_REGISTRATION_RE = re.compile(
 MESSAGE_BROKER_REGISTRATION_RE = re.compile(
     r"\b(?:ServiceBusClient|ServiceBusProcessor|ServiceBusSender|new\s+ConnectionFactory\s*\(|"
     r"RabbitMQ\.Client|IModel\b|ProducerBuilder|ConsumerBuilder|KafkaProducer|KafkaConsumer|"
-    r"AmazonSQSClient|AmazonSNSClient|EndpointConfiguration|AzureServiceBusTransport|UseAzureServiceBusTransport)\b",
+    r"AmazonSQSClient|AmazonSNSClient|EndpointConfiguration|AzureServiceBusTransport|UseAzureServiceBusTransport|"
+    r"ServiceBusTrigger|ServiceBusOutput)\b",
     re.IGNORECASE,
 )
 # A string constant naming a queue, topic, or subscription (e.g. `const string FundingProjectionQueue =

@@ -85,7 +85,9 @@ For a message-broker dependency, list every queue, topic, or subscription the co
 from as a resource: type is queue, topic, or subscription; name is the entity's actual name, resolved from
 a string constant or configuration default in the bundle when the call passes one (for example
 QueueConstants.FundingProjectionQueue resolves to "funding-projection-requests"), or null when it cannot be
-resolved; direction is outbound for sending and inbound for receiving. Record each send or receive site as
+resolved; direction is outbound for sending and inbound for receiving. A function or handler triggered by a queue or
+subscription -- such as an Azure Functions [ServiceBusTrigger(...)] parameter -- receives from it, so report
+that broker with direction inbound. Record each send or receive site as
 an operation: method is SEND, PUBLISH, or RECEIVE; methodName is the consuming code's own method that sends
 or receives (for example SendImportLearnerCost); path is the entity name, or null when unresolved.
 
