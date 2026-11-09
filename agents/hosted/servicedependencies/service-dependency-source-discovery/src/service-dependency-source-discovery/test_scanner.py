@@ -93,6 +93,13 @@ class ScanTests(unittest.TestCase):
 
         self.assertEqual(["https://github.com/source/app/blob/main/src/Jobs/Endpoint.cs"], result["sourceFiles"])
 
+    def test_an_azure_functions_service_bus_trigger_is_a_candidate(self):
+        result = scan(SOURCE, archive({
+            "src/Functions/OrdersQueueTrigger.cs": "public async Task Run([ServiceBusTrigger(QueueConstants.OrdersQueue, Connection = \"Bus\")] OrderEvent message) {}",
+        }))
+
+        self.assertEqual(["https://github.com/source/app/blob/main/src/Functions/OrdersQueueTrigger.cs"], result["sourceFiles"])
+
     def test_platform_registrations_are_candidates(self):
         files = {
             "src/AppStart/Configuration.cs": "builder.AddAzureTableStorage(options => options.ConfigurationKeys = names);",
