@@ -17,7 +17,8 @@ MAX_SOURCE_FILES = 150
 MAX_FILE_BYTES = 512 * 1024
 MAX_TOTAL_BYTES = 3 * 1024 * 1024
 MODEL_KINDS = {
-    "http-api", "grpc-service", "cache", "message-broker", "database", "object-storage", "cloud-service", "other",
+    "http-api", "grpc-service", "cache", "message-broker", "database", "object-storage", "cloud-service",
+    "configuration-store", "telemetry", "identity-provider", "other",
 }
 INCLUDED_KINDS = MODEL_KINDS - {"other"}
 CLASSIFICATIONS = {"internal", "third-party", "unknown"}
@@ -33,6 +34,9 @@ RELATIONSHIP_VERBS = {
     "database": "Reads from and writes to",
     "object-storage": "Stores objects in",
     "cloud-service": "Uses",
+    "configuration-store": "Reads configuration from",
+    "telemetry": "Sends telemetry to",
+    "identity-provider": "Authenticates with",
 }
 
 
@@ -76,6 +80,29 @@ such as a secrets or key-vault client. For each of these, as with cache, require
 construction or registration, not merely consuming an already-injected generic interface with no evidence
 of which technology backs it. Do not include package/library dependencies, the repository's own inbound
 API, ordinary domain services, local files, or in-process components.
+
+For a message-broker dependency, list every queue, topic, or subscription the code sends to or receives
+from as a resource: type is queue, topic, or subscription; name is the entity's actual name, resolved from
+a string constant or configuration default in the bundle when the call passes one (for example
+QueueConstants.FundingProjectionQueue resolves to "funding-projection-requests"), or null when it cannot be
+resolved; direction is outbound for sending and inbound for receiving. Record each send or receive site as
+an operation: method is SEND, PUBLISH, or RECEIVE; methodName is the consuming code's own method that sends
+or receives (for example SendImportLearnerCost); path is the entity name, or null when unresolved.
+
+Also include these platform dependencies, which nearly every service has, when the bundle evidences their
+registration -- report each once per container that registers it:
+- configuration-store: configuration loaded from a remote store at startup, such as AddAzureTableStorage
+  (SFA.DAS.Configuration, named "Azure Table Storage configuration") or AddAzureAppConfiguration (named
+  "Azure App Configuration"). Not plain appsettings or environment-variable configuration.
+- telemetry: a telemetry exporter or SDK registration, such as UseAzureMonitor, AddApplicationInsightsTelemetry,
+  AddApplicationInsightsTelemetryWorkerService, or an Azure Monitor or OTLP exporter. Name it after the
+  destination ("Application Insights" for Azure Monitor and Application Insights). Not ordinary logging.
+- identity-provider: an external identity provider the service authenticates users or callers against,
+  such as Microsoft Entra ID (AddMicrosoftIdentityWebApi or AddMicrosoftIdentityWebApp, AddJwtBearer or
+  AddAuthentication configured from an AzureAd section or AzureActiveDirectoryConfiguration), DfE Sign-in,
+  or GOV.UK One Login. Name it after the provider. Not the service's own authorization policies.
+For these, set classification to third-party, direction to outbound, operations to an empty array, and list
+the configuration key names that point at the store, destination, or provider.
 
 First identify the containers: the independently-deployable projects evidenced in the supplied bundle --
 for example a web application (an ASP.NET/web entry point, MVC or Razor registration), an API (controllers,
@@ -127,7 +154,7 @@ hyphens. type is one of api, web, job, or other. dependencies is sorted by kind 
 Every dependency has exactly: sourceId, name, kind, classification, direction, client, technology,
 configurationKeys, authentication, operations, resources, evidence, confidence. sourceId is the id of the
 container that evidences the dependency. kind is one of http-api, grpc-service, cache, message-broker, database,
-object-storage, or cloud-service. classification is internal,
+object-storage, cloud-service, configuration-store, telemetry, or identity-provider. classification is internal,
 third-party, or unknown. direction is
 outbound, inbound, bidirectional, or unknown. client and technology may be null. configurationKeys is a
 sorted array of key names. authentication has exactly type and configurationKeys; type may be null.
@@ -135,9 +162,9 @@ operations contains objects with exactly method, methodName, path, sourceFile; m
 null. methodName is the name of the consuming code's own method that performs the call (for example
 GetProviderRelationships or CreateReservation, taken from the interface or class member being invoked or
 implemented) -- not the HTTP method -- and may be null only when no such method name is evidenced. For a
-cache, database, message-broker, object-storage, or cloud-service dependency, method, methodName, and path
-are typically all null since these are not called through named methods or routes; use empty arrays for
-operations when nothing more specific is evidenced. resources
+cache, database, object-storage, or cloud-service dependency, method, methodName, and path are typically
+all null since these are not called through named methods or routes; use empty arrays for operations when
+nothing more specific is evidenced. A message-broker dependency's operations follow the rules above. resources
 contains objects with exactly type, name, direction, sourceFile; name may be null. evidence contains
 objects with exactly sourceFile and reason. confidence is high, medium, or low. Source files must be paths
 from the supplied bundle. Use empty arrays when evidence does not support a field. Never invent facts.

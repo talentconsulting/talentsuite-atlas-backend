@@ -332,6 +332,9 @@ _EXTERNAL_MACRO_BY_KIND = {
     "database": "SystemDb_Ext",
     "object-storage": "SystemDb_Ext",
     "message-broker": "SystemQueue_Ext",
+    "configuration-store": "SystemDb_Ext",
+    "telemetry": "System_Ext",
+    "identity-provider": "System_Ext",
 }
 _PUML_ALIAS_RE = re.compile(r"[^A-Za-z0-9_]")
 

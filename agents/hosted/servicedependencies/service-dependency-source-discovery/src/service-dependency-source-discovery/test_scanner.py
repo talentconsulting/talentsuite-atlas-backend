@@ -78,6 +78,37 @@ class ScanTests(unittest.TestCase):
             result["sourceFiles"],
         )
 
+    def test_a_queue_name_constant_is_a_candidate(self):
+        result = scan(SOURCE, archive({
+            "src/Domain/QueueConstants.cs": 'static class QueueConstants { public const string OrdersQueue = "orders-requests"; }',
+            "src/Domain/Limits.cs": 'static class Limits { public const string Label = "orders"; }',
+        }))
+
+        self.assertEqual(["https://github.com/source/app/blob/main/src/Domain/QueueConstants.cs"], result["sourceFiles"])
+
+    def test_an_nservicebus_endpoint_configuration_is_a_candidate(self):
+        result = scan(SOURCE, archive({
+            "src/Jobs/Endpoint.cs": "var endpoint = new EndpointConfiguration(\"SFA.DAS.Orders\"); endpoint.UseAzureServiceBusTransport(cs);",
+        }))
+
+        self.assertEqual(["https://github.com/source/app/blob/main/src/Jobs/Endpoint.cs"], result["sourceFiles"])
+
+    def test_platform_registrations_are_candidates(self):
+        files = {
+            "src/AppStart/Configuration.cs": "builder.AddAzureTableStorage(options => options.ConfigurationKeys = names);",
+            "src/AppStart/Telemetry.cs": "services.AddOpenTelemetry().UseAzureMonitor(options => options.ConnectionString = cs);",
+            "src/AppStart/Insights.cs": "services.AddApplicationInsightsTelemetryWorkerService();",
+            "src/AppStart/Auth.cs": "services.AddMicrosoftIdentityWebApi(configuration.GetSection(\"AzureAd\"));",
+            "src/AppStart/Logging.cs": "services.AddLogging(builder => builder.AddConsole());",
+        }
+
+        result = scan(SOURCE, archive(files))
+
+        self.assertEqual(
+            sorted(f"https://github.com/source/app/blob/main/{path}" for path in files if not path.endswith("Logging.cs")),
+            sorted(result["sourceFiles"]),
+        )
+
     def test_a_client_that_only_consumes_an_injected_httpclient_is_not_a_registration(self):
         result = scan(SOURCE, archive({
             "src/Clients/AccountsClient.cs": (

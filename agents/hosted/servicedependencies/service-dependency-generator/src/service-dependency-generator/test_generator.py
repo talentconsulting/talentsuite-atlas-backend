@@ -162,6 +162,47 @@ class GeneratorTests(unittest.TestCase):
             self.assertIn(name, by_name)
             self.assertEqual(description, by_name[name]["description"])
 
+    def test_platform_dependencies_are_kept_with_their_own_actions(self):
+        catalog = json.loads(json.dumps(CATALOG))
+        extras = [
+            ("Azure Table Storage configuration", "configuration-store", "Reads configuration from"),
+            ("Application Insights", "telemetry", "Sends telemetry to"),
+            ("Microsoft Entra ID", "identity-provider", "Authenticates with"),
+        ]
+        for name, kind, _ in extras:
+            entry = json.loads(json.dumps(CATALOG["dependencies"][0]))
+            entry.update({"name": name, "kind": kind, "client": None, "operations": [], "classification": "third-party"})
+            catalog["dependencies"].append(entry)
+
+        result = validate_catalog(catalog, source_paths={"src/Clients/AccountsClient.cs"})
+
+        by_name = {dependency["name"]: dependency for dependency in result["dependencies"]}
+        for name, kind, description in extras:
+            self.assertEqual((kind, description), (by_name[name]["kind"], by_name[name]["description"]))
+
+    def test_a_message_broker_keeps_its_queue_resources_and_send_operations(self):
+        catalog = json.loads(json.dumps(CATALOG))
+        broker = json.loads(json.dumps(CATALOG["dependencies"][0]))
+        broker.update({
+            "name": "Service Bus", "kind": "message-broker", "client": "ServiceBusClient",
+            "operations": [{"method": "SEND", "methodName": "SendImportLearnerCost", "path": "funding-projection-requests",
+                            "sourceFile": "src/Clients/AccountsClient.cs"}],
+            "resources": [{"type": "queue", "name": "funding-projection-requests", "direction": "outbound",
+                           "sourceFile": "src/Clients/AccountsClient.cs"}],
+        })
+        catalog["dependencies"].append(broker)
+
+        result = validate_catalog(catalog, source_paths={"src/Clients/AccountsClient.cs"})
+
+        kept = next(d for d in result["dependencies"] if d["name"] == "Service Bus")
+        self.assertEqual("funding-projection-requests", kept["resources"][0]["name"])
+        self.assertEqual(("SEND", "funding-projection-requests"), (kept["operations"][0]["method"], kept["operations"][0]["path"]))
+
+    def test_the_prompt_asks_for_platform_dependencies_and_queue_names(self):
+        for phrase in ("configuration-store", "telemetry", "identity-provider", "type is queue, topic, or subscription",
+                       "method is SEND, PUBLISH, or RECEIVE"):
+            self.assertIn(phrase, generator.SYSTEM_INSTRUCTIONS)
+
     def test_filters_kind_other_dependencies_from_model_output(self):
         catalog = json.loads(json.dumps(CATALOG))
         other = json.loads(json.dumps(CATALOG["dependencies"][0]))
