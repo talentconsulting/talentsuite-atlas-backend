@@ -395,6 +395,10 @@ def catalog_to_puml(catalog: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+# A batch whose catalog didn't fit in one model response: generating smaller batches can succeed.
+SPLITTABLE_ERRORS = {"model_output_truncated", "invalid_model_output"}
+
+
 def _generate_batch(
     project: Any, generator_name: str, model: str, source_url: str, batch: list[str], invoker: Callable[..., Any],
     tenant: str | None = None,
@@ -406,7 +410,17 @@ def _generate_batch(
             return validate_catalog(invoker(project, generator_name, model, payload, max_attempts=1))
         except Exception as error:
             last_error = error
+            if getattr(error, "code", None) == "model_output_truncated":
+                break  # The same batch would be cut off again.
     assert last_error is not None
+    if getattr(last_error, "code", None) in SPLITTABLE_ERRORS and len(batch) > 1:
+        # Files that register many clients (das-apim-endpoints' areas wire up dozens each) can produce
+        # a catalog longer than one model response, so halve the batch until each half's catalog fits.
+        middle = len(batch) // 2
+        return merge_catalogs([
+            _generate_batch(project, generator_name, model, source_url, half, invoker, tenant)
+            for half in (batch[:middle], batch[middle:])
+        ])
     raise last_error
 
 

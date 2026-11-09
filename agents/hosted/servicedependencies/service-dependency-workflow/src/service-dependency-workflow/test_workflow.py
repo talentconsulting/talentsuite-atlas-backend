@@ -251,6 +251,48 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual([], result["catalogs"])
         self.assertFalse(publisher_called)
 
+    def test_a_batch_whose_catalog_is_cut_off_is_split_until_it_fits(self):
+        files = [f"https://github.com/source/app/blob/main/src/Clients/Client{index}.cs" for index in range(4)]
+        generator_batches = []
+
+        def invoke(project, name, model, payload, max_attempts=2):
+            if name == "discovery":
+                return {"sourceFiles": files, "excludedFiles": []}
+            generator_batches.append(len(payload["sourceFiles"]))
+            if len(payload["sourceFiles"]) > 1:
+                return {"error": {"code": "model_output_truncated", "message": "cut off"}}
+            index = files.index(payload["sourceFiles"][0])
+            return catalog([dependency(f"Api {index}")])
+
+        result = run_workflow(
+            object(), {"sourceUrl": SOURCE, "deferPublication": True},
+            "discovery", "generator", "publisher", "gpt-4o", generator_batch_size=4, invoker=invoke,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(["Api 0", "Api 1", "Api 2", "Api 3"], sorted(d["name"] for d in result["catalogs"][0]["catalog"]["dependencies"]))
+        # A cut-off batch is split rather than retried whole: 4, then 2 + 2, then 1 + 1 + 1 + 1.
+        self.assertEqual([4, 2, 2, 1, 1, 1, 1], sorted(generator_batches, reverse=True))
+
+    def test_invalid_json_from_a_multi_file_batch_is_split_after_a_retry(self):
+        generator_batches = []
+
+        def invoke(project, name, model, payload, max_attempts=2):
+            if name == "discovery":
+                return {"sourceFiles": FILES, "excludedFiles": []}
+            generator_batches.append(len(payload["sourceFiles"]))
+            if len(payload["sourceFiles"]) > 1:
+                return {"error": {"code": "invalid_model_output", "message": "Model output was not valid JSON."}}
+            return catalog([dependency(f"Api {FILES.index(payload['sourceFiles'][0])}")])
+
+        result = run_workflow(
+            object(), {"sourceUrl": SOURCE, "deferPublication": True},
+            "discovery", "generator", "publisher", "gpt-4o", generator_batch_size=2, invoker=invoke,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual([2, 2, 1, 1], sorted(generator_batches, reverse=True))
+
     def test_discovery_finding_no_files_succeeds_with_an_empty_catalog(self):
         def invoke(project, name, model, payload, max_attempts=2):
             if name == "discovery":

@@ -290,6 +290,9 @@ def _foundry_completion(prompt: str) -> str:
         timeout=180,
     )
     usage_ledger.record(response, "service-dependency-generator", model)
+    if getattr(response, "status", None) == "incomplete":
+        # Cut off at max_output_tokens: the JSON is unfinished. The workflow splits the batch and retries.
+        raise GenerationError("model_output_truncated", "Model output reached its length limit before the catalog was complete.")
     return response.output_text
 
 
