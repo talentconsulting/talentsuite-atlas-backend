@@ -94,7 +94,21 @@ DATABASE_REGISTRATION_RE = re.compile(
 MESSAGE_BROKER_REGISTRATION_RE = re.compile(
     r"\b(?:ServiceBusClient|ServiceBusProcessor|ServiceBusSender|new\s+ConnectionFactory\s*\(|"
     r"RabbitMQ\.Client|IModel\b|ProducerBuilder|ConsumerBuilder|KafkaProducer|KafkaConsumer|"
-    r"AmazonSQSClient|AmazonSNSClient)\b",
+    r"AmazonSQSClient|AmazonSNSClient|EndpointConfiguration|AzureServiceBusTransport|UseAzureServiceBusTransport)\b",
+    re.IGNORECASE,
+)
+# A string constant naming a queue, topic, or subscription (e.g. `const string FundingProjectionQueue =
+# "funding-projection-requests"`), so the generator can name the entity a sender or receiver passes by constant.
+MESSAGE_ENTITY_CONSTANT_RE = re.compile(
+    r"\bconst\s+string\s+\w*(?:Queue|Topic|Subscription)\w*\s*=\s*\"",
+    re.IGNORECASE,
+)
+# Registration of a platform service nearly every service has: a remote configuration store, a telemetry
+# exporter, or an external identity provider.
+PLATFORM_REGISTRATION_RE = re.compile(
+    r"\b(?:AddAzureTableStorage|AddAzureAppConfiguration|UseAzureMonitor|AddApplicationInsightsTelemetry\w*|"
+    r"AddAzureMonitor\w*Exporter|AddOtlpExporter|AddMicrosoftIdentityWeb(?:Api|App)|AddJwtBearer|AddOpenIdConnect|"
+    r"AzureActiveDirectoryConfiguration|DfESignIn\w*|GovUkOneLogin\w*|AddAndConfigureGovUkAuthentication)\b",
     re.IGNORECASE,
 )
 # Evidence that an object-storage (blob/bucket) client is used -- technology-specific type names.
@@ -173,6 +187,8 @@ def _candidate(path: str, content: str) -> bool:
         or bool(MESSAGE_BROKER_REGISTRATION_RE.search(content))
         or bool(OBJECT_STORAGE_REGISTRATION_RE.search(content))
         or bool(CLOUD_SERVICE_REGISTRATION_RE.search(content))
+        or bool(MESSAGE_ENTITY_CONSTANT_RE.search(content))
+        or bool(PLATFORM_REGISTRATION_RE.search(content))
     )
     is_proto_service = lowered.endswith(".proto") and bool(PROTO_SERVICE_RE.search(content))
     is_api_configuration = filename in CONFIG_NAMES and bool(API_INTEGRATION_RE.search(content))
@@ -191,6 +207,8 @@ def _priority(path: str, content: str) -> tuple[int, str]:
         or MESSAGE_BROKER_REGISTRATION_RE.search(content)
         or OBJECT_STORAGE_REGISTRATION_RE.search(content)
         or CLOUD_SERVICE_REGISTRATION_RE.search(content)
+        or MESSAGE_ENTITY_CONSTANT_RE.search(content)
+        or PLATFORM_REGISTRATION_RE.search(content)
         or filename in CONFIG_NAMES
         or _is_container_shape_evidence(filename)
     ):
