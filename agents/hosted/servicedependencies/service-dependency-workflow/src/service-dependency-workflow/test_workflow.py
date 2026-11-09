@@ -293,6 +293,68 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertEqual([2, 2, 1, 1], sorted(generator_batches, reverse=True))
 
+    def test_every_batch_carries_the_entry_points(self):
+        base = "https://github.com/source/app/blob/main/src"
+        entries = [f"{base}/Api/Program.cs", f"{base}/Api/Startup.cs"]
+        others = [f"{base}/Clients/Client{index}.cs" for index in range(3)] + [f"{base}/Types/App.Types.csproj"]
+        sent = []
+
+        def invoke(project, name, model, payload, max_attempts=2):
+            if name == "discovery":
+                return {"sourceFiles": others[:2] + entries + others[2:], "excludedFiles": []}
+            sent.append(payload["sourceFiles"])
+            return catalog([dependency()])
+
+        result = run_workflow(
+            object(), {"sourceUrl": SOURCE, "deferPublication": True},
+            "discovery", "generator", "publisher", "gpt-4o", generator_batch_size=2, invoker=invoke,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(2, len(sent))
+        for files in sent:
+            self.assertEqual(entries, files[:2])
+        self.assertEqual(sorted(others), sorted(file for files in sent for file in files[2:]))
+
+    def test_a_repository_of_only_entry_points_is_one_batch(self):
+        entries = ["https://github.com/source/app/blob/main/src/Api/Program.cs"]
+        sent = []
+
+        def invoke(project, name, model, payload, max_attempts=2):
+            if name == "discovery":
+                return {"sourceFiles": entries, "excludedFiles": []}
+            sent.append(payload["sourceFiles"])
+            return catalog([dependency()])
+
+        run_workflow(
+            object(), {"sourceUrl": SOURCE, "deferPublication": True},
+            "discovery", "generator", "publisher", "gpt-4o", invoker=invoke,
+        )
+
+        self.assertEqual([entries], sent)
+
+    def test_a_split_batch_keeps_the_entry_points_in_each_half(self):
+        base = "https://github.com/source/app/blob/main/src"
+        entry = f"{base}/Api/Program.cs"
+        others = [f"{base}/Clients/Client{index}.cs" for index in range(2)]
+        sent = []
+
+        def invoke(project, name, model, payload, max_attempts=2):
+            if name == "discovery":
+                return {"sourceFiles": [entry] + others, "excludedFiles": []}
+            sent.append(payload["sourceFiles"])
+            if len(payload["sourceFiles"]) > 2:
+                return {"error": {"code": "model_output_truncated", "message": "cut off"}}
+            return catalog([dependency(f"Api {others.index(payload['sourceFiles'][1])}")])
+
+        result = run_workflow(
+            object(), {"sourceUrl": SOURCE, "deferPublication": True},
+            "discovery", "generator", "publisher", "gpt-4o", generator_batch_size=2, invoker=invoke,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual([[entry] + others, [entry, others[0]], [entry, others[1]]], sent)
+
     def test_discovery_finding_no_files_succeeds_with_an_empty_catalog(self):
         def invoke(project, name, model, payload, max_attempts=2):
             if name == "discovery":
