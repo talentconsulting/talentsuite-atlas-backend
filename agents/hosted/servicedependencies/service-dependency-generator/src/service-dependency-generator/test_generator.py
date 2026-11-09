@@ -217,6 +217,35 @@ class GeneratorTests(unittest.TestCase):
 
         self.assertEqual("model_output_truncated", raised.exception.code)
 
+    def test_registered_clients_lists_each_client_interface_with_its_configuration_types(self):
+        sources = {"src/Registrations.cs": """
+            services.AddSingleton<IAzureClientCredentialHelper, AzureClientCredentialHelper>();
+            services.AddSingleton<IApprenticeshipLevyApiClient>(provider => new ApprenticeshipLevyApiClient());
+            services.AddTransient<IProviderPaymentApiClient<ProviderEventsApiConfiguration>, ProviderPaymentApiClient>();
+            services.AddTransient<IFinanceApiClient<FinanceApiConfiguration>, FinanceApiClient>();
+            services.AddScoped<IProviderService, ProviderService>();
+            services.AddOuterApiClient<IJobsOuterApiClient, JobsOuterApiClient, JobsOuterApiConfiguration>();
+        """}
+
+        clients = {client["interface"]: client["configurationTypes"] for client in generator.registered_clients(sources)}
+
+        self.assertEqual({
+            "IApprenticeshipLevyApiClient": [],
+            "IFinanceApiClient": ["FinanceApiConfiguration"],
+            "IJobsOuterApiClient": ["JobsOuterApiConfiguration"],
+            "IProviderPaymentApiClient": ["ProviderEventsApiConfiguration"],
+        }, clients)
+
+    def test_the_prompt_lists_registered_clients_as_a_checklist(self):
+        location = generator.parse_source_url("https://github.com/source/app/tree/main/src")
+
+        with_clients = generator.source_prompt(location, {"src/A.cs": "services.AddScoped<IRoatpApiClient, RoatpApiClient>();"})
+        without = generator.source_prompt(location, {"src/A.cs": "services.AddScoped<IProviderService, ProviderService>();"})
+
+        self.assertIn('"interface":"IRoatpApiClient"', with_clients)
+        self.assertIn("Report a dependency for each one", with_clients)
+        self.assertNotIn("Report a dependency for each one", without)
+
     def test_filters_kind_other_dependencies_from_model_output(self):
         catalog = json.loads(json.dumps(CATALOG))
         other = json.loads(json.dumps(CATALOG["dependencies"][0]))

@@ -142,6 +142,15 @@ already found elsewhere. A single registration file commonly wires up several un
 ordinary domain services in the same block of code; enumerate each client-shaped registration (interface
 and implementation names ending in Client, ApiClient, or similar) individually, even when only one of them
 has additional evidence -- such as manual HttpClient construction -- elsewhere in the supplied bundle.
+This includes generic registrations whose client type carries a configuration type argument (for example
+AddTransient<IFinanceApiClient<FinanceApiConfiguration>, FinanceApiClient>() is the "Finance" HTTP API),
+and custom registration extension methods named Add...Client (for example
+AddOuterApiClient<IEmployerFinanceJobsOuterApiClient, EmployerFinanceJobsOuterApiClient,
+EmployerFinanceJobsOuterApiConfiguration>() is the "Employer Finance Jobs Outer" HTTP API). Report each as
+an http-api dependency and list its configuration type name (for example FinanceApiConfiguration or
+EmployerFinanceJobsOuterApiConfiguration) in configurationKeys, since that names the API being called.
+Before answering, check every Add...<...Client...> registration in each registration file against your
+dependencies, and add any you have not reported.
 
 Never return credentials, tokens, API keys, connection-string values, literal endpoint hostnames, or
 other secret/configuration values. Return configuration key names only. Operation paths must be relative
@@ -262,6 +271,35 @@ def _download_selected_sources(location: SourceLocation, source_files: list[str]
     return dict(sorted(sources.items()))
 
 
+# A DI registration of a client interface: AddTransient<IFinanceApiClient<FinanceApiConfiguration>, ...>,
+# AddHttpClient<IAccountsApiClient, ...>, AddSingleton<IApprenticeshipLevyApiClient>(...), or a custom
+# AddOuterApiClient<IEmployerFinanceJobsOuterApiClient, ..., EmployerFinanceJobsOuterApiConfiguration>.
+CLIENT_REGISTRATION_RE = re.compile(r"\bAdd\w*\s*<\s*(I[A-Z]\w*Client)\b(?:\s*<\s*(\w+)\s*>)?")
+
+
+def registered_clients(sources: dict[str, str]) -> list[dict[str, object]]:
+    """Every client interface a bundle file registers, with the configuration types it is registered with.
+
+    The model reliably reports some of a registration file's clients but not all of them, and which ones it
+    drops varies between runs, so these are listed in the prompt as a checklist it must account for.
+    """
+    found: dict[str, dict[str, set[str]]] = {}
+    for path, content in sources.items():
+        for match in CLIENT_REGISTRATION_RE.finditer(content):
+            entry = found.setdefault(match.group(1), {"files": set(), "configurationTypes": set()})
+            entry["files"].add(path)
+            # A configuration type is the client's generic argument, or a later type argument of the same
+            # registration named ...Configuration -- only up to the call's "(", never the next statement.
+            type_arguments = content[match.end():match.end() + 300].split("(", 1)[0]
+            for name in ([match.group(2)] if match.group(2) else []) + re.findall(r"\b(\w+Configuration)\b", type_arguments):
+                if name.endswith("Configuration"):
+                    entry["configurationTypes"].add(name)
+    return [
+        {"interface": name, "files": sorted(value["files"]), "configurationTypes": sorted(value["configurationTypes"])}
+        for name, value in sorted(found.items())
+    ]
+
+
 def source_prompt(location: SourceLocation, sources: dict[str, str]) -> str:
     bundle = {
         "repository": f"{location.owner}/{location.repository}",
@@ -269,9 +307,18 @@ def source_prompt(location: SourceLocation, sources: dict[str, str]) -> str:
         "path": location.base_path,
         "files": [{"path": path, "content": content} for path, content in sources.items()],
     }
-    return "Generate the service-dependency catalog as one JSON object from this source bundle:\n" + json.dumps(
+    prompt = "Generate the service-dependency catalog as one JSON object from this source bundle:\n" + json.dumps(
         bundle, ensure_ascii=False, separators=(",", ":")
     )
+    clients = registered_clients(sources)
+    if clients:
+        prompt += (
+            "\n\nThese client interfaces are registered in the bundle. Report a dependency for each one -- named by "
+            "the naming rules, with its configuration types in configurationKeys -- unless the file shows it is not "
+            "an outbound call (for example an in-process helper):\n"
+            + json.dumps(clients, separators=(",", ":"))
+        )
+    return prompt
 
 
 def _foundry_completion(prompt: str) -> str:
