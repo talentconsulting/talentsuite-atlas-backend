@@ -203,6 +203,20 @@ class GeneratorTests(unittest.TestCase):
                        "method is SEND, PUBLISH, or RECEIVE"):
             self.assertIn(phrase, generator.SYSTEM_INSTRUCTIONS)
 
+    def test_a_response_cut_off_at_the_output_limit_is_reported_as_truncated(self):
+        response = mock.Mock(status="incomplete", output_text='{"repository": "source/app", "dependencies": [')
+        client = mock.Mock()
+        client.get_openai_client.return_value.responses.create.return_value = response
+        projects = mock.Mock(AIProjectClient=mock.Mock(return_value=client))
+        identity = mock.Mock(DefaultAzureCredential=mock.Mock())
+        with mock.patch.dict("os.environ", {"FOUNDRY_PROJECT_ENDPOINT": "https://foundry", "AZURE_AI_MODEL_DEPLOYMENT_NAME": "model"}), \
+                mock.patch.dict("sys.modules", {"azure.ai.projects": projects, "azure.identity": identity}), \
+                mock.patch.object(generator.usage_ledger, "record"):
+            with self.assertRaises(GenerationError) as raised:
+                generator._foundry_completion("prompt")
+
+        self.assertEqual("model_output_truncated", raised.exception.code)
+
     def test_filters_kind_other_dependencies_from_model_output(self):
         catalog = json.loads(json.dumps(CATALOG))
         other = json.loads(json.dumps(CATALOG["dependencies"][0]))
